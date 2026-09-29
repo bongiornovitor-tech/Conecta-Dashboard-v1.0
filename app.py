@@ -32,8 +32,6 @@ footer {visibility: hidden;}
     border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 4px 20px rgba(0,0,0,0.4);
     display: flex; flex-direction: column; justify-content: space-between; min-width: 160px;
 }
-
-/* Topo do Card (Ícone + Textos) */
 .kpi-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 15px; }
 .kpi-icon { 
     width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; 
@@ -42,13 +40,29 @@ footer {visibility: hidden;}
 .kpi-text-group { display: flex; flex-direction: column; }
 .kpi-title { font-size: 12px; color: #9ca3af; font-weight: 500; margin-bottom: 2px; }
 .kpi-value { font-size: 24px; color: white; font-weight: 700; margin: 0; line-height: 1.1; letter-spacing: -0.5px;}
-
-/* Base do Card (Delta + Sparkline) */
 .kpi-bottom { display: flex; justify-content: space-between; align-items: flex-end; }
 .kpi-delta-group { display: flex; flex-direction: column; }
 .kpi-delta { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 4px;}
 .kpi-delta-desc { font-size: 10px; color: #6b7280; margin-top: 2px;}
 .kpi-sparkline { margin-bottom: -5px; }
+
+/* VISÃO POR ESTRATÉGIA MODERNA (Cards Limpos sem Linhas) */
+.strat-card {
+    background: linear-gradient(145deg, #0b1121, #060913);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+.strat-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+.strat-name { font-size: 16px; font-weight: bold; color: white; }
+.strat-desc { font-size: 12px; color: #9ca3af; margin-top: 2px; }
+.strat-metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: left; }
+.strat-metric-label { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 600; margin-bottom: 2px; }
+.strat-metric-val { font-size: 14px; font-weight: 600; color: white; }
+.p-bar-bg { width: 100%; background-color: #1e293b; border-radius: 10px; height: 6px; margin-top: 6px; overflow: hidden; }
+.p-bar-fill { height: 100%; border-radius: 10px; }
 
 /* Fluxo da Estratégia */
 .flow-wrapper { display: flex; align-items: center; justify-content: center; gap: 20px; background: #0b1120; padding: 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); margin-top: 15px;}
@@ -57,23 +71,14 @@ footer {visibility: hidden;}
 .flow-label { font-size: 12px; color: #cbd5e1; font-weight: 500; text-align: center; line-height: 1.2;}
 .flow-arrow { color: #475569; font-size: 18px; margin-top: -20px;}
 
-/* Funil Customizado 3D (HTML Puro) */
+/* Funil Customizado 3D */
 .funnel-container { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 30px; width: 100%;}
 .funnel-layer { position: relative; display: flex; justify-content: center; align-items: center; text-align: center; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
 .funnel-layer span { position: relative; z-index: 2; line-height: 1.2;}
-
-/* Formas do Funil */
 .f1 { width: 100%; height: 60px; background: linear-gradient(90deg, #1e3a8a, #3b82f6); clip-path: polygon(0 0, 100% 0, 85% 100%, 15% 100%); }
 .f2 { width: 70%; height: 60px; background: linear-gradient(90deg, #0f766e, #14b8a6); clip-path: polygon(0 0, 100% 0, 80% 100%, 20% 100%); }
 .f3 { width: 42%; height: 50px; background: linear-gradient(90deg, #be123c, #f43f5e); clip-path: polygon(0 0, 100% 0, 75% 100%, 25% 100%); }
 .f4 { width: 21%; height: 40px; background: linear-gradient(90deg, #334155, #64748b); clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); border-radius: 0 0 8px 8px;}
-
-/* Tabela */
-.modern-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-.modern-table th { color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: left;}
-.modern-table td { color: white; font-size: 13px; font-weight: 500; padding: 16px 10px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle;}
-.p-bar-bg { width: 100%; background-color: #1e293b; border-radius: 10px; height: 6px; margin-top: 8px; overflow: hidden;}
-.p-bar-fill { height: 100%; border-radius: 10px; }
 
 /* Cabeçalhos de Seção */
 .section-title { font-size: 18px; color: white; font-weight: 600; margin: 20px 0 15px 0; border-left: 4px solid #3b82f6; padding-left: 10px; }
@@ -155,15 +160,13 @@ cards_data = [
     {"titulo": "Contatos produtivos", "valor": f"{n_prod:,.0f}", "cor": "#14b8a6", "icone": "📞", "delta_val": "+18,7%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "38,4% da base", "pontos": "0,25 20,20 40,22 60,10 80,12 100,2"},
     {"titulo": "Contatos improdutivos", "valor": f"{n_improd:,.0f}", "cor": "#f43f5e", "icone": "📵", "delta_val": "+6,1%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "25,6% da base", "pontos": "0,25 20,24 40,20 60,22 80,15 100,5"},
     {"titulo": "Sem contato", "valor": f"{n_sem:,.0f}", "cor": "#6b7280", "icone": "📴", "delta_val": "-8,3%", "delta_cor": "#f43f5e", "delta_seta": "▼", "desc": "36,0% da base", "pontos": "0,5 20,10 40,8 60,15 80,12 100,25"},
-    {"titulo": "Custo total", "valor": f"R$ {c_total:,.2f}", "cor": "#8b5cf6", "icone": "🪙", "delta_val": "+4,9%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "vs. período anterior", "pontos": "0,25 20,26 40,20 60,15 80,18 100,5"},
-    {"titulo": "Custo por efetivo", "valor": f"R$ {c_efetivo:,.2f}", "cor": "#0ea5e9", "icone": "📊", "delta_val": "-11,3%", "delta_cor": "#10b981", "delta_seta": "▼", "desc": "vs. período anterior", "pontos": "0,5 20,12 40,10 60,20 80,15 100,28"}
+    {"titulo": "Custo total", "valor": f"R$ {c_total:,.2f}", "cor": "#8b5cf6", "icone": "🪙", "delta_val": "+4,9%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "vs. período anterior", "pontos": "0,25 20,26 40,20 60,15 80,18 100,5"}
 ]
 
 html_cards = '<div class="kpi-wrapper">\n'
 for c in cards_data:
     valor_fmt = c["valor"].replace(',', 'X').replace('.', ',').replace('X', '.')
     svg = get_sparkline_svg(c["cor"], c["pontos"])
-    
     html_cards += f'''<div class="kpi-card" style="border-top: 2px solid {c['cor']}40;">
 <div class="kpi-top">
 <div class="kpi-icon" style="background-color: {c['cor']}; box-shadow: 0 0 15px {c['cor']}60;">{c['icone']}</div>
@@ -189,26 +192,54 @@ col_esq, col_dir = st.columns([1, 1])
 with col_esq:
     st.markdown('<div class="section-title">Visão por Estratégia</div>', unsafe_allow_html=True)
     
-    # 4. TABELA MODERNA
+    # 4. VISÃO POR ESTRATÉGIA MODERNA (Com Descrições e Barras Proporcionais)
     df_grp = df_fact.groupby('strategy_name').agg(unicos=('contact_id', 'nunique'), custo_tot=('custo_num', 'sum')).reset_index()
     prod_grp = df_fact[df_fact['productive_flag']==1].groupby('strategy_name')['contact_id'].nunique().reset_index()
     prod_grp.rename(columns={'contact_id': 'produtivos'}, inplace=True)
     df_grp = df_grp.merge(prod_grp, on='strategy_name', how='left').fillna(0)
+    df_grp = df_grp.merge(df_strat[['strategy_name', 'objective']], on='strategy_name', how='left')
     
-    html_table = '<table class="modern-table"><tr><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por efetivo</th></tr>\n'
+    max_custo_ef = 3.0 # Limite máximo proporcional para a barra de custo unitário
     
     for _, row in df_grp.iterrows():
         pct_prod = (row['produtivos'] / row['unicos']) * 100 if row['unicos'] > 0 else 0
         custo_ef = row['custo_tot'] / row['produtivos'] if row['produtivos'] > 0 else 0
-        html_table += f'''<tr>
-<td><b>{row['strategy_name']}</b></td>
-<td>{row['unicos']:,.0f}</td>
-<td>{pct_prod:.1f}%<div class="p-bar-bg"><div class="p-bar-fill" style="width:{pct_prod}%; background:#14b8a6;"></div></div></td>
-<td>R$ {row['custo_tot']:,.2f}</td>
-<td>R$ {custo_ef:.2f}<div class="p-bar-bg"><div class="p-bar-fill" style="width:{(custo_ef/2)*100}%; background:#8b5cf6;"></div></div></td>
-</tr>\n'''
-    html_table += '</table>'
-    st.markdown(html_table.replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
+        pct_custo_ef = min(100, (custo_ef / max_custo_ef) * 100) # Proporção exata baseada no teto
+        
+        unicos_fmt = f"{row['unicos']:,.0f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        custo_tot_fmt = f"R$ {row['custo_tot']:,.2f}".replace('.', ',')
+        custo_ef_fmt = f"R$ {custo_ef:,.2f}".replace('.', ',')
+        
+        st.markdown(f'''
+        <div class="strat-card">
+            <div class="strat-header">
+                <div>
+                    <div class="strat-name">{row['strategy_name']}</div>
+                    <div class="strat-desc">{row['objective']}</div>
+                </div>
+            </div>
+            <div class="strat-metrics-grid">
+                <div>
+                    <div class="strat-metric-label">Números únicos</div>
+                    <div class="strat-metric-val">{unicos_fmt}</div>
+                </div>
+                <div>
+                    <div class="strat-metric-label">% Produtivo</div>
+                    <div class="strat-metric-val">{pct_prod:.1f}%</div>
+                    <div class="p-bar-bg"><div class="p-bar-fill" style="width:{pct_prod}%; background:#14b8a6;"></div></div>
+                </div>
+                <div>
+                    <div class="strat-metric-label">Custo total</div>
+                    <div class="strat-metric-val">{custo_tot_fmt}</div>
+                </div>
+                <div>
+                    <div class="strat-metric-label">Custo / Efetivo</div>
+                    <div class="strat-metric-val">{custo_ef_fmt}</div>
+                    <div class="p-bar-bg"><div class="p-bar-fill" style="width:{pct_custo_ef}%; background:#8b5cf6;"></div></div>
+                </div>
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
 
     st.markdown('<div class="section-title">Funil da Estratégia</div>', unsafe_allow_html=True)
     
