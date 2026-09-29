@@ -3,6 +3,8 @@ import pandas as pd
 import requests
 import io
 import plotly.graph_objects as go
+import base64
+import os
 
 st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
 
@@ -81,12 +83,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 2. LOGO EM BASE64 (Não quebra)
-logo_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAyCAMAAAA/l889AAAAXVBMVEUAAAD///9ZWVlXV1dYWFhZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFjy2H1UAAAAHnRSTlMAAAAABAwQGBwgICAkJCQkJCQkJCQkJCQkJCQkJCRe6q+1AAACcUlEQVRo3u2Y25KDMAxEc+Hw/3+2HAg4aQzLTDt134eZ6k4PkrWStN2u6/q/t+f8E4gIxBfE2x/ItyDcfiHIuSDTfkGId0H0vUEI74Jo+4LwvAui7wnC/S6Iui8I9bsg2p4g5O+CeHuCcL8Lov8Jgn0XpLo/BCH2BcE9Qbh9QWBPEN4ThHoXxL8jCO0JwvpdkGJPENQTRLw7ItgdhFh/I8jtCaI/EYT7QxDtD0HAviDcH4KU9wUh9gSh3gWhPUGAfUG4PwQp7wtC7AlCvQtCe4IA+4JwfwhS3heE2BOEehcE9gRh9wVJ9wSh3h2xvz8j2J8IAvYF4f4QpLwvCLEnCPUuCO0JAuwLwv0hSHlfEGJPEOpdENoTBNgXhPtDkPK+IMSeINS7ILA/BAnvC8L8CUJ9IqLeFwT3BOH+EKS8LwjxJwj17ojl/ozwvAtS3BOE+0OQ8r4gxJ4g1LsgtCcIsC8I94cg5X1BiD1BqHdBjD1BoH1BuD8EKe8Lgn2C/D0RwX1BoP0hSHhfEOJPkHhPROr7giD7Q5D0viDEniDUuyCwP0Tk+4Iwe4KA/hCkvC8IsScI9S4I7QkC7AvC/SFIeV8QYk8Q6l0QYk8Q3LsgqCcI9b8g/O+CqB9EbO+IeL4LQrw74rs7IrwvCPYnCPXuiO/uiPC+IMCeINSfIuLZEfG8CwL7Q0S8O+K7OyK8LwiwJwjwT5H77ojsviC4J0icP0U83x0R3hcE2BOE+FNEPDsi/O+CqJ4gxJ8g9F0Qe09E3BOE/1PE8y4I7wnC/SmifBfE3xOE+FPE810Q4U+R16DtdtufP2d/AHQ7wz4x3tGSAAAAAElFTkSuQmCC"
+# 2. LOGO LIDO DIRETAMENTE DO ARQUIVO LOCAL DO GITHUB
+def carregar_logo():
+    caminho_arquivo = "Conecta+ Logo.png"
+    if os.path.exists(caminho_arquivo):
+        with open(caminho_arquivo, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode()
+            return f"data:image/png;base64,{encoded_string}"
+    else:
+        # Fallback para link caso o arquivo não seja encontrado na raiz
+        # Note o "%2B" e "%20" substituindo "+" e espaço para a URL funcionar
+        return "https://raw.githubusercontent.com/bongiornovitor-tech/Conecta-Dashboard-v1.0/main/Conecta%2B%20Logo.png"
+
+logo_src = carregar_logo()
 
 st.markdown(f"""
     <div class="header-container">
-        <img src="{logo_base64}" width="160" style="margin-right: 25px;">
+        <img src="{logo_src}" width="160" style="margin-right: 25px;">
         <div class="header-text">
             <h1>Conecta+ <span>Strategy Cockpit</span></h1>
             <p>Efetividade, custo e performance por estratégia</p>
