@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
+import io
 
 # Configuração da página e tema escuro integral
 st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
@@ -12,7 +14,6 @@ st.markdown("""
     .stMetric { background-color: #1a2235; padding: 15px; border-radius: 10px; }
     div[data-testid="stMetricValue"], div[data-testid="stMetricDelta"] { color: white; }
     h1, h2, h3, h4, p, span, div, label { color: #e2e8f0; }
-    /* Estilo para a tabela */
     .stDataFrame { background-color: #1a2235; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
@@ -23,12 +24,19 @@ st.markdown("Efetividade, custo e performance por estratégia")
 # --- CONEXÃO COM SEUS DADOS REAIS ---
 @st.cache_data(ttl=600) # Atualiza a cada 10 min
 def load_data():
-    # URL de exportação do seu Sheets para ler diretamente com o pandas
     url = "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=xlsx"
     
-    df_fact = pd.read_excel(url, sheet_name='dashboard_fact')
-    df_strat = pd.read_excel(url, sheet_name='strategy')
-    df_steps = pd.read_excel(url, sheet_name='strategy_steps')
+    # Faz o download fingindo ser um navegador comum para evitar bloqueios (HTTPError)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    response = requests.get(url, headers=headers)
+    response.raise_for_status() # Garante que o download funcionou
+    
+    # Carrega o arquivo excel em memória
+    excel_data = io.BytesIO(response.content)
+    
+    df_fact = pd.read_excel(excel_data, sheet_name='dashboard_fact')
+    df_strat = pd.read_excel(excel_data, sheet_name='strategy')
+    df_steps = pd.read_excel(excel_data, sheet_name='strategy_steps')
     
     # Tratamento da coluna de custos (transformando "R$ 0.34" em número)
     if 'attempt_cost' in df_fact.columns:
@@ -45,11 +53,10 @@ df_fact, df_strat, df_steps = load_data()
 estrategias_disp = ["Todas"] + list(df_fact['strategy_name'].dropna().unique())
 col_periodo, col_estrategia, _ = st.columns([2, 2, 6])
 with col_periodo:
-    st.selectbox("Período", ["01 Set 2026 - 30 Set 2026"]) # Baseado nas datas da sua base
+    st.selectbox("Período", ["01 Set 2026 - 30 Set 2026"])
 with col_estrategia:
     estr_selecionada = st.selectbox("Estratégia", estrategias_disp)
 
-# Aplica os filtros na base principal
 if estr_selecionada != "Todas":
     df_filtered = df_fact[df_fact['strategy_name'] == estr_selecionada]
 else:
@@ -82,7 +89,6 @@ col_esq, col_dir = st.columns([1, 1])
 with col_esq:
     st.markdown("### Visão por Estratégia")
     
-    # Cria a tabela agrupando os dados reais
     df_grp = df_fact.groupby('strategy_name').agg(
         unicos=('contact_id', 'nunique'),
         custo_tot=('custo_num', 'sum')
@@ -117,10 +123,8 @@ with col_esq:
 with col_dir:
     st.markdown(f"### Configuração da Estratégia Selecionada")
     if estr_selecionada != "Todas":
-        # Lê a aba strategy_steps de forma inteligente
         strat_id = df_strat[df_strat['strategy_name'] == estr_selecionada]['strategy_id'].iloc[0]
         steps = df_steps[df_steps['strategy_id'] == strat_id].sort_values('step_order')
-        
         step_str = " ➔ ".join([f"{row['channel']} (+{row['wait_minutes']}m)" for idx, row in steps.iterrows()])
         st.info(f"**Sequência de abordagem:** {step_str}")
     else:
