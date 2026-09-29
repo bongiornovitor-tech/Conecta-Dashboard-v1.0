@@ -1,70 +1,92 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import requests
 import io
-import base64
+import plotly.graph_objects as go
 
-# Configuração da página
 st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
 
-# 1. INJEÇÃO DE CSS AVANÇADO (Para os cards neon, logo e tabela moderna)
+# 1. INJEÇÃO DE CSS GLOBAL AVANÇADO
 st.markdown("""
     <style>
-    /* Fundo geral */
-    .stApp { background-color: #0b0f19; color: #e2e8f0; }
+    /* Fundo e tipografia geral */
+    .stApp { background-color: #050b14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     
-    /* Layout do Topo e Logo */
-    .header-container { display: flex; align-items: center; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid #1f2937; margin-bottom: 20px;}
-    .header-text h1 { color: white; margin: 0; font-size: 32px; font-weight: 700; display: inline-block; }
-    .header-text h1 span { color: #8b5cf6; } /* Strategy Cockpit em roxo */
-    .header-text p { color: #9ca3af; margin: 5px 0 0 0; font-size: 16px; }
+    /* Esconde elementos padrão do Streamlit */
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    .css-18e3th9 {padding-top: 0rem;}
     
-    /* Cards KPI Neon (CSS puro) */
-    .kpi-container { display: flex; justify-content: space-between; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }
+    /* Cabecalho e Logo */
+    .header-container { display: flex; align-items: center; padding: 15px 0 25px 0; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .header-text h1 { color: white; margin: 0; font-size: 34px; font-weight: 700; display: inline-block; letter-spacing: -0.5px;}
+    .header-text h1 span { color: #8b5cf6; } 
+    .header-text p { color: #9ca3af; margin: 4px 0 0 0; font-size: 15px; font-weight: 400;}
+    
+    /* Cards KPI Neon (Exatamente como o Mockup) */
+    .kpi-wrapper { display: flex; gap: 15px; justify-content: space-between; margin-bottom: 30px; }
     .kpi-card { 
-        flex: 1; min-width: 150px; background: #111827; border-radius: 12px; padding: 15px;
-        border: 1px solid rgba(255,255,255,0.05); box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        display: flex; flex-direction: column; position: relative; overflow: hidden;
+        flex: 1; background: linear-gradient(145deg, #0f172a, #0b1120); border-radius: 12px; padding: 20px 15px;
+        border: 1px solid rgba(255,255,255,0.03); 
+        display: flex; flex-direction: column; position: relative;
     }
+    .card-icon { width: 35px; height: 35px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; font-size: 18px; color: white;}
     
-    /* Variações de Cores dos Cards (Baseado no Print 1) */
-    .card-blue { border-top: 3px solid #3b82f6; box-shadow: 0 -10px 30px -10px rgba(59, 130, 246, 0.2); }
-    .card-teal { border-top: 3px solid #14b8a6; box-shadow: 0 -10px 30px -10px rgba(20, 184, 166, 0.2); }
-    .card-rose { border-top: 3px solid #f43f5e; box-shadow: 0 -10px 30px -10px rgba(244, 63, 94, 0.2); }
-    .card-gray { border-top: 3px solid #6b7280; box-shadow: 0 -10px 30px -10px rgba(107, 114, 128, 0.2); }
-    .card-purple { border-top: 3px solid #8b5cf6; box-shadow: 0 -10px 30px -10px rgba(139, 92, 246, 0.2); }
+    /* Cores Específicas dos Cards */
+    .kpi-card:nth-child(1) { box-shadow: 0 4px 20px -5px rgba(59, 130, 246, 0.15); }
+    .kpi-card:nth-child(1) .card-icon { background: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
     
-    .kpi-title { font-size: 12px; color: #9ca3af; font-weight: 600; margin-bottom: 5px; }
-    .kpi-value { font-size: 24px; color: white; font-weight: bold; margin: 0; }
-    .kpi-delta-up { font-size: 11px; color: #10b981; font-weight: bold; margin-top: 5px;}
-    .kpi-delta-down { font-size: 11px; color: #ef4444; font-weight: bold; margin-top: 5px;}
+    .kpi-card:nth-child(2) { box-shadow: 0 4px 20px -5px rgba(20, 184, 166, 0.15); }
+    .kpi-card:nth-child(2) .card-icon { background: #14b8a6; box-shadow: 0 0 15px rgba(20, 184, 166, 0.5); }
     
-    /* Configuração visual da Estratégia (Setas e Ícones) */
-    .flow-container { display: flex; align-items: center; justify-content: space-between; background: #111827; padding: 20px; border-radius: 12px; margin-top: 10px; }
-    .flow-step { display: flex; flex-direction: column; align-items: center; text-align: center; }
-    .flow-icon { width: 45px; height: 45px; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; color: white; font-size: 20px;}
-    .bg-whatsapp { background: linear-gradient(135deg, #25D366, #128C7E); }
-    .bg-call { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
-    .bg-branded { background: linear-gradient(135deg, #6366f1, #4338ca); }
-    .flow-label { font-size: 12px; color: white; font-weight: 500;}
-    .flow-time { font-size: 10px; color: #9ca3af; margin-top: 3px;}
-    .flow-arrow { color: #4b5563; font-size: 20px; }
+    .kpi-card:nth-child(3) { box-shadow: 0 4px 20px -5px rgba(244, 63, 94, 0.15); }
+    .kpi-card:nth-child(3) .card-icon { background: #f43f5e; box-shadow: 0 0 15px rgba(244, 63, 94, 0.5); }
     
-    /* Barra de progresso para a Tabela */
-    .progress-bar-container { width: 100%; background-color: #374151; border-radius: 4px; height: 8px; margin-top: 4px; }
-    .progress-bar-fill-teal { background-color: #14b8a6; height: 100%; border-radius: 4px; }
-    .progress-bar-fill-purple { background-color: #8b5cf6; height: 100%; border-radius: 4px; }
+    .kpi-card:nth-child(4) { box-shadow: 0 4px 20px -5px rgba(107, 114, 128, 0.15); }
+    .kpi-card:nth-child(4) .card-icon { background: #6b7280; box-shadow: 0 0 15px rgba(107, 114, 128, 0.5); }
+    
+    .kpi-card:nth-child(5) { box-shadow: 0 4px 20px -5px rgba(139, 92, 246, 0.15); }
+    .kpi-card:nth-child(5) .card-icon { background: #8b5cf6; box-shadow: 0 0 15px rgba(139, 92, 246, 0.5); }
+    
+    .kpi-title { font-size: 13px; color: #cbd5e1; font-weight: 500; margin-bottom: 2px; }
+    .kpi-value { font-size: 26px; color: white; font-weight: 700; margin: 0 0 10px 0; letter-spacing: -0.5px;}
+    
+    /* Fluxo da Estratégia */
+    .flow-wrapper { display: flex; align-items: center; justify-content: center; gap: 20px; background: #0b1120; padding: 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); margin-top: 15px;}
+    .flow-step { display: flex; flex-direction: column; align-items: center; width: 90px; }
+    .flow-icon { width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; font-size: 24px; color: white; box-shadow: 0 5px 15px rgba(0,0,0,0.3);}
+    .flow-label { font-size: 12px; color: #cbd5e1; font-weight: 500; text-align: center; line-height: 1.2;}
+    .flow-arrow { color: #475569; font-size: 18px; margin-top: -20px;}
+    
+    /* Funil Customizado 3D (HTML Puro) */
+    .funnel-container { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 30px; width: 100%;}
+    .funnel-layer { position: relative; display: flex; justify-content: center; align-items: center; text-align: center; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
+    .funnel-layer span { position: relative; z-index: 2; line-height: 1.2;}
+    
+    /* Formas do Funil */
+    .f1 { width: 100%; height: 60px; background: linear-gradient(90deg, #1e3a8a, #3b82f6); clip-path: polygon(0 0, 100% 0, 85% 100%, 15% 100%); }
+    .f2 { width: 70%; height: 60px; background: linear-gradient(90deg, #0f766e, #14b8a6); clip-path: polygon(0 0, 100% 0, 80% 100%, 20% 100%); }
+    .f3 { width: 42%; height: 50px; background: linear-gradient(90deg, #be123c, #f43f5e); clip-path: polygon(0 0, 100% 0, 75% 100%, 25% 100%); }
+    .f4 { width: 21%; height: 40px; background: linear-gradient(90deg, #334155, #64748b); clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); border-radius: 0 0 8px 8px;}
+    
+    /* Tabela */
+    .modern-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    .modern-table th { color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: left;}
+    .modern-table td { color: white; font-size: 13px; font-weight: 500; padding: 16px 10px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle;}
+    .p-bar-bg { width: 100%; background-color: #1e293b; border-radius: 10px; height: 6px; margin-top: 8px; overflow: hidden;}
+    .p-bar-fill { height: 100%; border-radius: 10px; }
+    
+    /* Cabeçalhos de Seção */
+    .section-title { font-size: 18px; color: white; font-weight: 600; margin: 20px 0 15px 0; border-left: 4px solid #3b82f6; padding-left: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
-# 2. LOGO E CABEÇALHO
-# O Logo real lido através da web
-logo_url = "https://raw.githubusercontent.com/bongiornovitor-tech/Conecta-Dashboard-v1.0/main/image_c3bb98.png"
+# 2. LOGO EM BASE64 (Não quebra)
+logo_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAyCAMAAAA/l889AAAAXVBMVEUAAAD///9ZWVlXV1dYWFhZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFhZWVlYWFhZWVlZWVlYWFhZWVlYWFjy2H1UAAAAHnRSTlMAAAAABAwQGBwgICAkJCQkJCQkJCQkJCQkJCQkJCRe6q+1AAACcUlEQVRo3u2Y25KDMAxEc+Hw/3+2HAg4aQzLTDt134eZ6k4PkrWStN2u6/q/t+f8E4gIxBfE2x/ItyDcfiHIuSDTfkGId0H0vUEI74Jo+4LwvAui7wnC/S6Iui8I9bsg2p4g5O+CeHuCcL8Lov8Jgn0XpLo/BCH2BcE9Qbh9QWBPEN4ThHoXxL8jCO0JwvpdkGJPENQTRLw7ItgdhFh/I8jtCaI/EYT7QxDtD0HAviDcH4KU9wUh9gSh3gWhPUGAfUG4PwQp7wtC7AlCvQtCe4IA+4JwfwhS3heE2BOEehcE9gRh9wVJ9wSh3h2xvz8j2J8IAvYF4f4QpLwvCLEnCPUuCO0JAuwLwv0hSHlfEGJPEOpdENoTBNgXhPtDkPK+IMSeINS7ILA/BAnvC8L8CUJ9IqLeFwT3BOH+EKS8LwjxJwj17ojl/ozwvAtS3BOE+0OQ8r4gxJ4g1LsgtCcIsC8I94cg5X1BiD1BqHdBjD1BoH1BuD8EKe8Lgn2C/D0RwX1BoP0hSHhfEOJPkHhPROr7giD7Q5D0viDEniDUuyCwP0Tk+4Iwe4KA/hCkvC8IsScI9S4I7QkC7AvC/SFIeV8QYk8Q6l0QYk8Q3LsgqCcI9b8g/O+CqB9EbO+IeL4LQrw74rs7IrwvCPYnCPXuiO/uiPC+IMCeINSfIuLZEfG8CwL7Q0S8O+K7OyK8LwiwJwjwT5H77ojsviC4J0icP0U83x0R3hcE2BOE+FNEPDsi/O+CqJ4gxJ8g9F0Qe09E3BOE/1PE8y4I7wnC/SmifBfE3xOE+FPE810Q4U+R16DtdtufP2d/AHQ7wz4x3tGSAAAAAElFTkSuQmCC"
+
 st.markdown(f"""
     <div class="header-container">
-        <img src="{logo_url}" width="180" style="margin-right: 20px;" onerror="this.style.display='none'">
+        <img src="{logo_base64}" width="160" style="margin-right: 25px;">
         <div class="header-text">
             <h1>Conecta+ <span>Strategy Cockpit</span></h1>
             <p>Efetividade, custo e performance por estratégia</p>
@@ -72,15 +94,13 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# --- CONEXÃO COM SEUS DADOS REAIS ---
+# --- CONEXÃO COM DADOS REAIS ---
 @st.cache_data(ttl=600)
 def load_data():
     url = "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=xlsx"
     headers = {'User-Agent': 'Mozilla/5.0'}
     response = requests.get(url, headers=headers)
-    response.raise_for_status()
     excel_data = io.BytesIO(response.content)
-    
     df_fact = pd.read_excel(excel_data, sheet_name='dashboard_fact')
     df_strat = pd.read_excel(excel_data, sheet_name='strategy')
     df_steps = pd.read_excel(excel_data, sheet_name='strategy_steps')
@@ -88,14 +108,11 @@ def load_data():
     if 'attempt_cost' in df_fact.columns:
         df_fact['custo_num'] = df_fact['attempt_cost'].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False).str.replace(',', '.', regex=False)
         df_fact['custo_num'] = pd.to_numeric(df_fact['custo_num'], errors='coerce').fillna(0)
-    else:
-        df_fact['custo_num'] = 0.0
-
     return df_fact, df_strat, df_steps
 
 df_fact, df_strat, df_steps = load_data()
 
-# --- FILTROS (Compactos no topo) ---
+# --- FILTROS ---
 estrategias_disp = ["Todas"] + list(df_fact['strategy_name'].dropna().unique())
 col_p, col_e, _ = st.columns([2, 2, 8])
 with col_p:
@@ -103,12 +120,9 @@ with col_p:
 with col_e:
     estr_selecionada = st.selectbox("Estratégia", estrategias_disp, label_visibility="collapsed")
 
-if estr_selecionada != "Todas":
-    df_filtered = df_fact[df_fact['strategy_name'] == estr_selecionada]
-else:
-    df_filtered = df_fact
+df_filtered = df_fact[df_fact['strategy_name'] == estr_selecionada] if estr_selecionada != "Todas" else df_fact
 
-# --- CÁLCULO DE KPIs REAIS ---
+# --- CÁLCULO DOS KPIs ---
 n_unicos = df_filtered['contact_id'].nunique()
 n_prod = df_filtered[df_filtered['productive_flag'] == 1]['contact_id'].nunique()
 n_improd = df_filtered[df_filtered['unproductive_flag'] == 1]['contact_id'].nunique()
@@ -116,38 +130,33 @@ n_sem = max(0, n_unicos - n_prod - n_improd)
 c_total = df_filtered['custo_num'].sum()
 c_efetivo = c_total / n_prod if n_prod > 0 else 0
 
-# 3. WIDGETS NEON (HTML/CSS Injetado - Baseado na imagem 1)
+# 3. WIDGETS NEON (Idêntico ao Mockup)
 st.markdown(f"""
-    <div class="kpi-container">
-        <div class="kpi-card card-blue">
-            <div class="kpi-title">👥 Números únicos</div>
+    <div class="kpi-wrapper">
+        <div class="kpi-card">
+            <div class="card-icon">👥</div>
+            <div class="kpi-title">Números únicos</div>
             <div class="kpi-value">{n_unicos:,.0f}</div>
-            <div class="kpi-delta-up">▲ +12,4% <span style="color:#6b7280; font-weight:normal;">vs. período anterior</span></div>
         </div>
-        <div class="kpi-card card-teal">
-            <div class="kpi-title">📞 Contatos produtivos</div>
+        <div class="kpi-card">
+            <div class="card-icon">📞</div>
+            <div class="kpi-title">Contatos produtivos</div>
             <div class="kpi-value">{n_prod:,.0f}</div>
-            <div class="kpi-delta-up">▲ +18,7% <span style="color:#6b7280; font-weight:normal;">da base</span></div>
         </div>
-        <div class="kpi-card card-rose">
-            <div class="kpi-title">📵 Contatos improdutivos</div>
+        <div class="kpi-card">
+            <div class="card-icon">📵</div>
+            <div class="kpi-title">Contatos improdutivos</div>
             <div class="kpi-value">{n_improd:,.0f}</div>
-            <div class="kpi-delta-up">▲ +6,1% <span style="color:#6b7280; font-weight:normal;">da base</span></div>
         </div>
-        <div class="kpi-card card-gray">
-            <div class="kpi-title">📴 Sem contato</div>
+        <div class="kpi-card">
+            <div class="card-icon">📴</div>
+            <div class="kpi-title">Sem contato</div>
             <div class="kpi-value">{n_sem:,.0f}</div>
-            <div class="kpi-delta-down">▼ -8,3% <span style="color:#6b7280; font-weight:normal;">da base</span></div>
         </div>
-        <div class="kpi-card card-purple">
-            <div class="kpi-title">🪙 Custo total</div>
+        <div class="kpi-card">
+            <div class="card-icon">🪙</div>
+            <div class="kpi-title">Custo total</div>
             <div class="kpi-value">R$ {c_total:,.2f}</div>
-            <div class="kpi-delta-up">▲ +4,9% <span style="color:#6b7280; font-weight:normal;">vs. período anterior</span></div>
-        </div>
-        <div class="kpi-card card-blue">
-            <div class="kpi-title">📊 Custo por contato efetivo</div>
-            <div class="kpi-value">R$ {c_efetivo:,.2f}</div>
-            <div class="kpi-delta-down">▼ -11,3% <span style="color:#6b7280; font-weight:normal;">vs. período anterior</span></div>
         </div>
     </div>
 """.replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
@@ -156,110 +165,97 @@ st.markdown(f"""
 col_esq, col_dir = st.columns([1, 1])
 
 with col_esq:
-    st.markdown("### Visão por Estratégia")
-    # 4. TABELA MODERNA COM BARRAS DE PROGRESSO HTML (Baseado na imagem 2)
-    df_grp = df_fact.groupby('strategy_name').agg(
-        unicos=('contact_id', 'nunique'),
-        custo_tot=('custo_num', 'sum')
-    ).reset_index()
+    st.markdown('<div class="section-title">Visão por Estratégia</div>', unsafe_allow_html=True)
+    
+    # 4. TABELA MODERNA
+    df_grp = df_fact.groupby('strategy_name').agg(unicos=('contact_id', 'nunique'), custo_tot=('custo_num', 'sum')).reset_index()
     prod_grp = df_fact[df_fact['productive_flag']==1].groupby('strategy_name')['contact_id'].nunique().reset_index()
     prod_grp.rename(columns={'contact_id': 'produtivos'}, inplace=True)
     df_grp = df_grp.merge(prod_grp, on='strategy_name', how='left').fillna(0)
     
-    html_table = '<div style="background:#111827; border-radius:10px; padding:15px;"><table style="width:100%; text-align:left; color:white; border-collapse: collapse;">'
-    html_table += '<tr style="border-bottom:1px solid #1f2937; color:#9ca3af; font-size:12px;"><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por contato efetivo</th></tr>'
+    html_table = '<table class="modern-table"><tr><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por efetivo</th></tr>'
     
     for _, row in df_grp.iterrows():
         pct_prod = (row['produtivos'] / row['unicos']) * 100 if row['unicos'] > 0 else 0
         custo_ef = row['custo_tot'] / row['produtivos'] if row['produtivos'] > 0 else 0
-        
         html_table += f'''
-        <tr style="border-bottom:1px solid #1f2937;">
-            <td style="padding:15px 0;"><b>{row['strategy_name']}</b></td>
+        <tr>
+            <td><b>{row['strategy_name']}</b></td>
             <td>{row['unicos']:,.0f}</td>
-            <td>{pct_prod:.1f}%<div class="progress-bar-container"><div class="progress-bar-fill-teal" style="width:{pct_prod}%"></div></div></td>
+            <td>{pct_prod:.1f}%<div class="p-bar-bg"><div class="p-bar-fill" style="width:{pct_prod}%; background:#14b8a6;"></div></div></td>
             <td>R$ {row['custo_tot']:,.2f}</td>
-            <td>R$ {custo_ef:.2f}<div class="progress-bar-container"><div class="progress-bar-fill-purple" style="width:{(custo_ef/2)*100}%"></div></div></td>
+            <td>R$ {custo_ef:.2f}<div class="p-bar-bg"><div class="p-bar-fill" style="width:{(custo_ef/2)*100}%; background:#8b5cf6;"></div></div></td>
         </tr>'''
-    html_table += '</table></div>'
+    html_table += '</table>'
     st.markdown(html_table.replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
 
-
-    st.markdown("<br>### Funil da Estratégia", unsafe_allow_html=True)
-    # Funil mais sofisticado usando Area trace do Plotly para simular o formato 3D do print
-    fig_funnel = go.Figure(go.Funnel(
-        y=["Números únicos", "Contatos produtivos", "Contatos improdutivos", "Sem contato"],
-        x=[n_unicos, n_prod, n_improd, n_sem],
-        textposition="inside", textinfo="value+percent initial",
-        marker={"color": ["#1e40af", "#00bfa5", "#be185d", "#475569"],
-                "line": {"width": [0, 0, 0, 0]}},
-        connector = {"fillcolor": "rgba(255,255,255,0.05)"}
-    ))
-    fig_funnel.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white', size=14), margin=dict(t=10, b=10, l=0, r=0))
-    st.plotly_chart(fig_funnel, use_container_width=True)
+    st.markdown('<div class="section-title">Funil da Estratégia</div>', unsafe_allow_html=True)
+    
+    # 5. FUNIL 3D (HTML Puro Idêntico ao Mockup)
+    pct_prod = (n_prod/n_unicos*100) if n_unicos>0 else 0
+    pct_improd = (n_improd/n_unicos*100) if n_unicos>0 else 0
+    pct_sem = (n_sem/n_unicos*100) if n_unicos>0 else 0
+    
+    st.markdown(f"""
+        <div class="funnel-container">
+            <div class="funnel-layer f1"><span>{n_unicos:,.0f}<br><span style="font-size:11px; font-weight:normal;">Números únicos</span></span></div>
+            <div class="funnel-layer f2"><span>{n_prod:,.0f} ({pct_prod:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Contatos produtivos</span></span></div>
+            <div class="funnel-layer f3"><span>{n_improd:,.0f} ({pct_improd:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Contatos improdutivos</span></span></div>
+            <div class="funnel-layer f4"><span>{n_sem:,.0f} ({pct_sem:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Sem contato</span></span></div>
+        </div>
+    """.replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
 
 with col_dir:
-    st.markdown(f"### Configuração da Estratégia: {estr_selecionada}")
+    st.markdown(f'<div class="section-title">Configuração da Estratégia: {estr_selecionada}</div>', unsafe_allow_html=True)
     
-    # 5. DIAGRAMA VISUAL DINÂMICO DE ESTRATÉGIA (HTML puro)
+    # 6. DIAGRAMA DE FLUXO (Sem tempos, apenas ícones)
     if estr_selecionada != "Todas":
         strat_id = df_strat[df_strat['strategy_name'] == estr_selecionada]['strategy_id'].iloc[0]
         steps = df_steps[df_steps['strategy_id'] == strat_id].sort_values('step_order')
         
-        flow_html = '<div class="flow-container">'
-        
+        flow_html = '<div class="flow-wrapper">'
         for i, row in steps.iterrows():
             canal = row['channel']
-            tempo = row['wait_minutes']
-            
-            # Define logo e cor baseado no canal
             if 'whatsapp' in canal.lower():
-                bg, icon, label = "bg-whatsapp", "💬", "WhatsApp"
+                bg, icon, label = "background: #10b981;", "💬", "WhatsApp"
             elif 'branded' in canal.lower():
-                bg, icon, label = "bg-branded", "📊", "Branded Call"
+                bg, icon, label = "background: #8b5cf6;", "📊", "Branded Call"
             else:
-                bg, icon, label = "bg-call", "📞", "Ligação Trad"
+                bg, icon, label = "background: #3b82f6;", "📞", "Ligação Trad"
                 
-            tempo_str = "T0" if tempo == 0 else f"+{tempo} min"
-            
             flow_html += f'''
             <div class="flow-step">
-                <div class="flow-icon {bg}">{icon}</div>
+                <div class="flow-icon" style="{bg}">{icon}</div>
                 <div class="flow-label">{label}</div>
-                <div class="flow-time">{tempo_str}</div>
             </div>'''
-            
-            # Adiciona seta se não for o último
-            if i < len(steps) - 1:
-                flow_html += '<div class="flow-arrow">➔</div>'
-                
+            if i < len(steps) - 1: flow_html += '<div class="flow-arrow">➔</div>'
         flow_html += '</div>'
         st.markdown(flow_html, unsafe_allow_html=True)
     else:
-        st.info("Selecione uma estratégia específica no filtro do topo para ver o diagrama.")
+        st.info("Selecione uma estratégia para ver o fluxo.")
 
-    st.write("---")
+    # 7. DRILL DOWNS (Gráficos Donut Estilizados)
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_d1, col_d2 = st.columns(2)
     
-    # DRILL DOWNS Aprimorados
-    col_donut1, col_donut2 = st.columns(2)
-    with col_donut1:
-        st.markdown("<p style='text-align:center; color:#9ca3af; font-weight:bold;'>Distribuição Produtivos</p>", unsafe_allow_html=True)
+    with col_d1:
+        st.markdown("<div style='text-align:center; color:#cbd5e1; font-size:14px; margin-bottom:10px;'>Distribuição Produtivos</div>", unsafe_allow_html=True)
         df_prod = df_filtered[df_filtered['productive_flag'] == 1]
         if not df_prod.empty:
             df_chan = df_prod['channel'].value_counts().reset_index()
             df_chan.columns = ['Canal', 'Contatos']
-            fig_donut1 = go.Figure(data=[go.Pie(labels=df_chan['Canal'], values=df_chan['Contatos'], hole=.7, textinfo='percent', hoverinfo='label+percent')])
-            fig_donut1.update_traces(marker=dict(colors=['#14b8a6', '#8b5cf6', '#3b82f6', '#f43f5e']), textfont_size=14, textfont_color="white")
-            fig_donut1.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=10, b=10, l=10, r=10), height=250)
+            fig_donut1 = go.Figure(data=[go.Pie(labels=df_chan['Canal'], values=df_chan['Contatos'], hole=.75, textinfo='percent', textposition='outside')])
+            fig_donut1.update_traces(marker=dict(colors=['#14b8a6', '#8b5cf6', '#3b82f6', '#f43f5e']))
+            fig_donut1.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), height=280, margin=dict(t=0,b=0,l=0,r=0))
             st.plotly_chart(fig_donut1, use_container_width=True)
 
-    with col_donut2:
-        st.markdown("<p style='text-align:center; color:#9ca3af; font-weight:bold;'>Distribuição Improdutivos</p>", unsafe_allow_html=True)
+    with col_d2:
+        st.markdown("<div style='text-align:center; color:#cbd5e1; font-size:14px; margin-bottom:10px;'>Distribuição Improdutivos</div>", unsafe_allow_html=True)
         df_improd = df_filtered[df_filtered['unproductive_flag'] == 1]
         if not df_improd.empty:
             df_dur = df_improd['duration_band'].value_counts().reset_index()
             df_dur.columns = ['Duração', 'Contatos']
-            fig_donut2 = go.Figure(data=[go.Pie(labels=df_dur['Duração'], values=df_dur['Contatos'], hole=.7, textinfo='percent', hoverinfo='label+percent')])
-            fig_donut2.update_traces(marker=dict(colors=['#8b5cf6', '#3b82f6', '#14b8a6']), textfont_size=14, textfont_color="white")
-            fig_donut2.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=10, b=10, l=10, r=10), height=250)
+            fig_donut2 = go.Figure(data=[go.Pie(labels=df_dur['Duração'], values=df_dur['Contatos'], hole=.75, textinfo='percent', textposition='outside')])
+            fig_donut2.update_traces(marker=dict(colors=['#8b5cf6', '#3b82f6', '#14b8a6']))
+            fig_donut2.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), height=280, margin=dict(t=0,b=0,l=0,r=0))
             st.plotly_chart(fig_donut2, use_container_width=True)
