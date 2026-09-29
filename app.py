@@ -10,74 +10,74 @@ st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initia
 
 # 1. INJEÇÃO DE CSS GLOBAL AVANÇADO
 st.markdown("""
-    <style>
-    /* Fundo e tipografia geral */
-    .stApp { background-color: #050b14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-    
-    /* Esconde elementos padrão do Streamlit */
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    .css-18e3th9 {padding-top: 0rem;}
-    
-    /* Cabecalho e Logo */
-    .header-container { display: flex; align-items: center; padding: 15px 0 25px 0; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-    .header-text h1 { color: white; margin: 0; font-size: 34px; font-weight: 700; display: inline-block; letter-spacing: -0.5px;}
-    .header-text h1 span { color: #8b5cf6; } 
-    .header-text p { color: #9ca3af; margin: 4px 0 0 0; font-size: 15px; font-weight: 400;}
-    
-    /* WIDGETS NEON (Estilo Mockup Final com Sparkline) */
-    .kpi-wrapper { display: flex; gap: 15px; justify-content: space-between; margin-bottom: 30px; }
-    .kpi-card { 
-        flex: 1; background: linear-gradient(145deg, #0b1121, #060913); border-radius: 12px; padding: 18px;
-        border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-        display: flex; flex-direction: column; justify-content: space-between; min-width: 160px;
-    }
-    
-    /* Topo do Card (Ícone + Textos) */
-    .kpi-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 15px; }
-    .kpi-icon { 
-        width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; 
-        font-size: 20px; color: white; flex-shrink: 0;
-    }
-    .kpi-text-group { display: flex; flex-direction: column; }
-    .kpi-title { font-size: 12px; color: #9ca3af; font-weight: 500; margin-bottom: 2px; }
-    .kpi-value { font-size: 24px; color: white; font-weight: 700; margin: 0; line-height: 1.1; letter-spacing: -0.5px;}
-    
-    /* Base do Card (Delta + Sparkline) */
-    .kpi-bottom { display: flex; justify-content: space-between; align-items: flex-end; }
-    .kpi-delta-group { display: flex; flex-direction: column; }
-    .kpi-delta { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 4px;}
-    .kpi-delta-desc { font-size: 10px; color: #6b7280; margin-top: 2px;}
-    .kpi-sparkline { margin-bottom: -5px; } /* Ajuste fino para colar na base */
+<style>
+/* Fundo e tipografia geral */
+.stApp { background-color: #050b14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
 
-    /* Fluxo da Estratégia */
-    .flow-wrapper { display: flex; align-items: center; justify-content: center; gap: 20px; background: #0b1120; padding: 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); margin-top: 15px;}
-    .flow-step { display: flex; flex-direction: column; align-items: center; width: 90px; }
-    .flow-icon { width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; font-size: 24px; color: white; box-shadow: 0 5px 15px rgba(0,0,0,0.3);}
-    .flow-label { font-size: 12px; color: #cbd5e1; font-weight: 500; text-align: center; line-height: 1.2;}
-    .flow-arrow { color: #475569; font-size: 18px; margin-top: -20px;}
-    
-    /* Funil Customizado 3D (HTML Puro) */
-    .funnel-container { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 30px; width: 100%;}
-    .funnel-layer { position: relative; display: flex; justify-content: center; align-items: center; text-align: center; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
-    .funnel-layer span { position: relative; z-index: 2; line-height: 1.2;}
-    
-    /* Formas do Funil */
-    .f1 { width: 100%; height: 60px; background: linear-gradient(90deg, #1e3a8a, #3b82f6); clip-path: polygon(0 0, 100% 0, 85% 100%, 15% 100%); }
-    .f2 { width: 70%; height: 60px; background: linear-gradient(90deg, #0f766e, #14b8a6); clip-path: polygon(0 0, 100% 0, 80% 100%, 20% 100%); }
-    .f3 { width: 42%; height: 50px; background: linear-gradient(90deg, #be123c, #f43f5e); clip-path: polygon(0 0, 100% 0, 75% 100%, 25% 100%); }
-    .f4 { width: 21%; height: 40px; background: linear-gradient(90deg, #334155, #64748b); clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); border-radius: 0 0 8px 8px;}
-    
-    /* Tabela */
-    .modern-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-    .modern-table th { color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: left;}
-    .modern-table td { color: white; font-size: 13px; font-weight: 500; padding: 16px 10px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle;}
-    .p-bar-bg { width: 100%; background-color: #1e293b; border-radius: 10px; height: 6px; margin-top: 8px; overflow: hidden;}
-    .p-bar-fill { height: 100%; border-radius: 10px; }
-    
-    /* Cabeçalhos de Seção */
-    .section-title { font-size: 18px; color: white; font-weight: 600; margin: 20px 0 15px 0; border-left: 4px solid #3b82f6; padding-left: 10px; }
-    </style>
+/* Esconde elementos padrão do Streamlit */
+header {visibility: hidden;}
+footer {visibility: hidden;}
+.css-18e3th9 {padding-top: 0rem;}
+
+/* Cabecalho e Logo */
+.header-container { display: flex; align-items: center; padding: 15px 0 25px 0; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.header-text h1 { color: white; margin: 0; font-size: 34px; font-weight: 700; display: inline-block; letter-spacing: -0.5px;}
+.header-text h1 span { color: #8b5cf6; } 
+.header-text p { color: #9ca3af; margin: 4px 0 0 0; font-size: 15px; font-weight: 400;}
+
+/* WIDGETS NEON */
+.kpi-wrapper { display: flex; gap: 15px; justify-content: space-between; margin-bottom: 30px; }
+.kpi-card { 
+    flex: 1; background: linear-gradient(145deg, #0b1121, #060913); border-radius: 12px; padding: 18px;
+    border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    display: flex; flex-direction: column; justify-content: space-between; min-width: 160px;
+}
+
+/* Topo do Card (Ícone + Textos) */
+.kpi-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 15px; }
+.kpi-icon { 
+    width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; 
+    font-size: 20px; color: white; flex-shrink: 0;
+}
+.kpi-text-group { display: flex; flex-direction: column; }
+.kpi-title { font-size: 12px; color: #9ca3af; font-weight: 500; margin-bottom: 2px; }
+.kpi-value { font-size: 24px; color: white; font-weight: 700; margin: 0; line-height: 1.1; letter-spacing: -0.5px;}
+
+/* Base do Card (Delta + Sparkline) */
+.kpi-bottom { display: flex; justify-content: space-between; align-items: flex-end; }
+.kpi-delta-group { display: flex; flex-direction: column; }
+.kpi-delta { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 4px;}
+.kpi-delta-desc { font-size: 10px; color: #6b7280; margin-top: 2px;}
+.kpi-sparkline { margin-bottom: -5px; }
+
+/* Fluxo da Estratégia */
+.flow-wrapper { display: flex; align-items: center; justify-content: center; gap: 20px; background: #0b1120; padding: 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); margin-top: 15px;}
+.flow-step { display: flex; flex-direction: column; align-items: center; width: 90px; }
+.flow-icon { width: 50px; height: 50px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; font-size: 24px; color: white; box-shadow: 0 5px 15px rgba(0,0,0,0.3);}
+.flow-label { font-size: 12px; color: #cbd5e1; font-weight: 500; text-align: center; line-height: 1.2;}
+.flow-arrow { color: #475569; font-size: 18px; margin-top: -20px;}
+
+/* Funil Customizado 3D (HTML Puro) */
+.funnel-container { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 30px; width: 100%;}
+.funnel-layer { position: relative; display: flex; justify-content: center; align-items: center; text-align: center; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
+.funnel-layer span { position: relative; z-index: 2; line-height: 1.2;}
+
+/* Formas do Funil */
+.f1 { width: 100%; height: 60px; background: linear-gradient(90deg, #1e3a8a, #3b82f6); clip-path: polygon(0 0, 100% 0, 85% 100%, 15% 100%); }
+.f2 { width: 70%; height: 60px; background: linear-gradient(90deg, #0f766e, #14b8a6); clip-path: polygon(0 0, 100% 0, 80% 100%, 20% 100%); }
+.f3 { width: 42%; height: 50px; background: linear-gradient(90deg, #be123c, #f43f5e); clip-path: polygon(0 0, 100% 0, 75% 100%, 25% 100%); }
+.f4 { width: 21%; height: 40px; background: linear-gradient(90deg, #334155, #64748b); clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); border-radius: 0 0 8px 8px;}
+
+/* Tabela */
+.modern-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+.modern-table th { color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: left;}
+.modern-table td { color: white; font-size: 13px; font-weight: 500; padding: 16px 10px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle;}
+.p-bar-bg { width: 100%; background-color: #1e293b; border-radius: 10px; height: 6px; margin-top: 8px; overflow: hidden;}
+.p-bar-fill { height: 100%; border-radius: 10px; }
+
+/* Cabeçalhos de Seção */
+.section-title { font-size: 18px; color: white; font-weight: 600; margin: 20px 0 15px 0; border-left: 4px solid #3b82f6; padding-left: 10px; }
+</style>
 """, unsafe_allow_html=True)
 
 # 2. LOGO LIDO DIRETAMENTE DO ARQUIVO LOCAL DO GITHUB
@@ -91,13 +91,13 @@ def carregar_logo():
         return "https://raw.githubusercontent.com/bongiornovitor-tech/Conecta-Dashboard-v1.0/main/Conecta%2B%20Logo.png"
 
 st.markdown(f"""
-    <div class="header-container">
-        <img src="{carregar_logo()}" width="160" style="margin-right: 25px;">
-        <div class="header-text">
-            <h1>Conecta+ <span>Strategy Cockpit</span></h1>
-            <p>Efetividade, custo e performance por estratégia</p>
-        </div>
-    </div>
+<div class="header-container">
+<img src="{carregar_logo()}" width="160" style="margin-right: 25px;">
+<div class="header-text">
+<h1>Conecta+ <span>Strategy Cockpit</span></h1>
+<p>Efetividade, custo e performance por estratégia</p>
+</div>
+</div>
 """, unsafe_allow_html=True)
 
 # --- CONEXÃO COM DADOS REAIS ---
@@ -138,18 +138,16 @@ c_efetivo = c_total / n_prod if n_prod > 0 else 0
 
 # --- GERADOR DE SPARKLINE (Tendência) EM SVG ---
 def get_sparkline_svg(color, points):
-    return f"""
-    <svg viewBox="0 0 100 30" width="70" height="25" preserveAspectRatio="none">
-        <defs>
-            <linearGradient id="grad-{color.replace('#','')}" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="{color}" stop-opacity="0.5"/>
-                <stop offset="100%" stop-color="{color}" stop-opacity="0.0"/>
-            </linearGradient>
-        </defs>
-        <polyline points="{points}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round"/>
-        <polygon points="0,30 {points} 100,30" fill="url(#grad-{color.replace('#','')})"/>
-    </svg>
-    """
+    return f"""<svg viewBox="0 0 100 30" width="70" height="25" preserveAspectRatio="none">
+<defs>
+<linearGradient id="grad-{color.replace('#','')}" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="{color}" stop-opacity="0.5"/>
+<stop offset="100%" stop-color="{color}" stop-opacity="0.0"/>
+</linearGradient>
+</defs>
+<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round"/>
+<polygon points="0,30 {points} 100,30" fill="url(#grad-{color.replace('#','')})"/>
+</svg>"""
 
 # 3. CONSTRUÇÃO DINÂMICA DOS CARDS NEON
 cards_data = [
@@ -161,29 +159,27 @@ cards_data = [
     {"titulo": "Custo por efetivo", "valor": f"R$ {c_efetivo:,.2f}", "cor": "#0ea5e9", "icone": "📊", "delta_val": "-11,3%", "delta_cor": "#10b981", "delta_seta": "▼", "desc": "vs. período anterior", "pontos": "0,5 20,12 40,10 60,20 80,15 100,28"}
 ]
 
-html_cards = '<div class="kpi-wrapper">'
+html_cards = '<div class="kpi-wrapper">\n'
 for c in cards_data:
     valor_fmt = c["valor"].replace(',', 'X').replace('.', ',').replace('X', '.')
     svg = get_sparkline_svg(c["cor"], c["pontos"])
     
-    html_cards += f'''
-    <div class="kpi-card" style="border-top: 2px solid {c['cor']}40;">
-        <div class="kpi-top">
-            <div class="kpi-icon" style="background-color: {c['cor']}; box-shadow: 0 0 15px {c['cor']}60;">{c['icone']}</div>
-            <div class="kpi-text-group">
-                <div class="kpi-title">{c['titulo']}</div>
-                <div class="kpi-value">{valor_fmt}</div>
-            </div>
-        </div>
-        <div class="kpi-bottom">
-            <div class="kpi-delta-group">
-                <div class="kpi-delta" style="color: {c['delta_cor']};"><span>{c['delta_seta']}</span> {c['delta_val']}</div>
-                <div class="kpi-delta-desc">{c['desc']}</div>
-            </div>
-            <div class="kpi-sparkline">{svg}</div>
-        </div>
-    </div>
-    '''
+    html_cards += f'''<div class="kpi-card" style="border-top: 2px solid {c['cor']}40;">
+<div class="kpi-top">
+<div class="kpi-icon" style="background-color: {c['cor']}; box-shadow: 0 0 15px {c['cor']}60;">{c['icone']}</div>
+<div class="kpi-text-group">
+<div class="kpi-title">{c['titulo']}</div>
+<div class="kpi-value">{valor_fmt}</div>
+</div>
+</div>
+<div class="kpi-bottom">
+<div class="kpi-delta-group">
+<div class="kpi-delta" style="color: {c['delta_cor']};"><span>{c['delta_seta']}</span> {c['delta_val']}</div>
+<div class="kpi-delta-desc">{c['desc']}</div>
+</div>
+<div class="kpi-sparkline">{svg}</div>
+</div>
+</div>\n'''
 html_cards += '</div>'
 st.markdown(html_cards, unsafe_allow_html=True)
 
@@ -199,19 +195,18 @@ with col_esq:
     prod_grp.rename(columns={'contact_id': 'produtivos'}, inplace=True)
     df_grp = df_grp.merge(prod_grp, on='strategy_name', how='left').fillna(0)
     
-    html_table = '<table class="modern-table"><tr><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por efetivo</th></tr>'
+    html_table = '<table class="modern-table"><tr><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por efetivo</th></tr>\n'
     
     for _, row in df_grp.iterrows():
         pct_prod = (row['produtivos'] / row['unicos']) * 100 if row['unicos'] > 0 else 0
         custo_ef = row['custo_tot'] / row['produtivos'] if row['produtivos'] > 0 else 0
-        html_table += f'''
-        <tr>
-            <td><b>{row['strategy_name']}</b></td>
-            <td>{row['unicos']:,.0f}</td>
-            <td>{pct_prod:.1f}%<div class="p-bar-bg"><div class="p-bar-fill" style="width:{pct_prod}%; background:#14b8a6;"></div></div></td>
-            <td>R$ {row['custo_tot']:,.2f}</td>
-            <td>R$ {custo_ef:.2f}<div class="p-bar-bg"><div class="p-bar-fill" style="width:{(custo_ef/2)*100}%; background:#8b5cf6;"></div></div></td>
-        </tr>'''
+        html_table += f'''<tr>
+<td><b>{row['strategy_name']}</b></td>
+<td>{row['unicos']:,.0f}</td>
+<td>{pct_prod:.1f}%<div class="p-bar-bg"><div class="p-bar-fill" style="width:{pct_prod}%; background:#14b8a6;"></div></div></td>
+<td>R$ {row['custo_tot']:,.2f}</td>
+<td>R$ {custo_ef:.2f}<div class="p-bar-bg"><div class="p-bar-fill" style="width:{(custo_ef/2)*100}%; background:#8b5cf6;"></div></div></td>
+</tr>\n'''
     html_table += '</table>'
     st.markdown(html_table.replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
 
@@ -222,14 +217,12 @@ with col_esq:
     pct_improd = (n_improd/n_unicos*100) if n_unicos>0 else 0
     pct_sem = (n_sem/n_unicos*100) if n_unicos>0 else 0
     
-    st.markdown(f"""
-        <div class="funnel-container">
-            <div class="funnel-layer f1"><span>{n_unicos:,.0f}<br><span style="font-size:11px; font-weight:normal;">Números únicos</span></span></div>
-            <div class="funnel-layer f2"><span>{n_prod:,.0f} ({pct_prod:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Contatos produtivos</span></span></div>
-            <div class="funnel-layer f3"><span>{n_improd:,.0f} ({pct_improd:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Contatos improdutivos</span></span></div>
-            <div class="funnel-layer f4"><span>{n_sem:,.0f} ({pct_sem:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Sem contato</span></span></div>
-        </div>
-    """.replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
+    st.markdown(f"""<div class="funnel-container">
+<div class="funnel-layer f1"><span>{n_unicos:,.0f}<br><span style="font-size:11px; font-weight:normal;">Números únicos</span></span></div>
+<div class="funnel-layer f2"><span>{n_prod:,.0f} ({pct_prod:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Contatos produtivos</span></span></div>
+<div class="funnel-layer f3"><span>{n_improd:,.0f} ({pct_improd:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Contatos improdutivos</span></span></div>
+<div class="funnel-layer f4"><span>{n_sem:,.0f} ({pct_sem:.1f}%)<br><span style="font-size:11px; font-weight:normal;">Sem contato</span></span></div>
+</div>""".replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
 
 with col_dir:
     st.markdown(f'<div class="section-title">Configuração da Estratégia: {estr_selecionada}</div>', unsafe_allow_html=True)
@@ -239,7 +232,7 @@ with col_dir:
         strat_id = df_strat[df_strat['strategy_name'] == estr_selecionada]['strategy_id'].iloc[0]
         steps = df_steps[df_steps['strategy_id'] == strat_id].sort_values('step_order')
         
-        flow_html = '<div class="flow-wrapper">'
+        flow_html = '<div class="flow-wrapper">\n'
         for i, row in steps.iterrows():
             canal = row['channel']
             if 'whatsapp' in canal.lower():
@@ -249,12 +242,11 @@ with col_dir:
             else:
                 bg, icon, label = "background: #3b82f6;", "📞", "Ligação Trad"
                 
-            flow_html += f'''
-            <div class="flow-step">
-                <div class="flow-icon" style="{bg}">{icon}</div>
-                <div class="flow-label">{label}</div>
-            </div>'''
-            if i < len(steps) - 1: flow_html += '<div class="flow-arrow">➔</div>'
+            flow_html += f'''<div class="flow-step">
+<div class="flow-icon" style="{bg}">{icon}</div>
+<div class="flow-label">{label}</div>
+</div>\n'''
+            if i < len(steps) - 1: flow_html += '<div class="flow-arrow">➔</div>\n'
         flow_html += '</div>'
         st.markdown(flow_html, unsafe_allow_html=True)
     else:
