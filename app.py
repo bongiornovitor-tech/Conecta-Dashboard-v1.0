@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import base64
 import os
 
-st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
 
 # 1. INJEÇÃO DE CSS GLOBAL AVANÇADO
 st.markdown("""
