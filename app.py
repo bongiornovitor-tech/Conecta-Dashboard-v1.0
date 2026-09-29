@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import base64
 import os
 
-st.set_page_config(page_title="Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
 
 # 1. INJEÇÃO DE CSS GLOBAL AVANÇADO
 st.markdown("""
@@ -25,34 +25,31 @@ st.markdown("""
     .header-text h1 span { color: #8b5cf6; } 
     .header-text p { color: #9ca3af; margin: 4px 0 0 0; font-size: 15px; font-weight: 400;}
     
-    /* Cards KPI Neon (Exatamente como o Mockup) */
+    /* WIDGETS NEON (Estilo Mockup Final com Sparkline) */
     .kpi-wrapper { display: flex; gap: 15px; justify-content: space-between; margin-bottom: 30px; }
     .kpi-card { 
-        flex: 1; background: linear-gradient(145deg, #0f172a, #0b1120); border-radius: 12px; padding: 20px 15px;
-        border: 1px solid rgba(255,255,255,0.03); 
-        display: flex; flex-direction: column; position: relative;
+        flex: 1; background: linear-gradient(145deg, #0b1121, #060913); border-radius: 12px; padding: 18px;
+        border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        display: flex; flex-direction: column; justify-content: space-between; min-width: 160px;
     }
-    .card-icon { width: 35px; height: 35px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; font-size: 18px; color: white;}
     
-    /* Cores Específicas dos Cards */
-    .kpi-card:nth-child(1) { box-shadow: 0 4px 20px -5px rgba(59, 130, 246, 0.15); }
-    .kpi-card:nth-child(1) .card-icon { background: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
+    /* Topo do Card (Ícone + Textos) */
+    .kpi-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 15px; }
+    .kpi-icon { 
+        width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; 
+        font-size: 20px; color: white; flex-shrink: 0;
+    }
+    .kpi-text-group { display: flex; flex-direction: column; }
+    .kpi-title { font-size: 12px; color: #9ca3af; font-weight: 500; margin-bottom: 2px; }
+    .kpi-value { font-size: 24px; color: white; font-weight: 700; margin: 0; line-height: 1.1; letter-spacing: -0.5px;}
     
-    .kpi-card:nth-child(2) { box-shadow: 0 4px 20px -5px rgba(20, 184, 166, 0.15); }
-    .kpi-card:nth-child(2) .card-icon { background: #14b8a6; box-shadow: 0 0 15px rgba(20, 184, 166, 0.5); }
-    
-    .kpi-card:nth-child(3) { box-shadow: 0 4px 20px -5px rgba(244, 63, 94, 0.15); }
-    .kpi-card:nth-child(3) .card-icon { background: #f43f5e; box-shadow: 0 0 15px rgba(244, 63, 94, 0.5); }
-    
-    .kpi-card:nth-child(4) { box-shadow: 0 4px 20px -5px rgba(107, 114, 128, 0.15); }
-    .kpi-card:nth-child(4) .card-icon { background: #6b7280; box-shadow: 0 0 15px rgba(107, 114, 128, 0.5); }
-    
-    .kpi-card:nth-child(5) { box-shadow: 0 4px 20px -5px rgba(139, 92, 246, 0.15); }
-    .kpi-card:nth-child(5) .card-icon { background: #8b5cf6; box-shadow: 0 0 15px rgba(139, 92, 246, 0.5); }
-    
-    .kpi-title { font-size: 13px; color: #cbd5e1; font-weight: 500; margin-bottom: 2px; }
-    .kpi-value { font-size: 26px; color: white; font-weight: 700; margin: 0 0 10px 0; letter-spacing: -0.5px;}
-    
+    /* Base do Card (Delta + Sparkline) */
+    .kpi-bottom { display: flex; justify-content: space-between; align-items: flex-end; }
+    .kpi-delta-group { display: flex; flex-direction: column; }
+    .kpi-delta { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 4px;}
+    .kpi-delta-desc { font-size: 10px; color: #6b7280; margin-top: 2px;}
+    .kpi-sparkline { margin-bottom: -5px; } /* Ajuste fino para colar na base */
+
     /* Fluxo da Estratégia */
     .flow-wrapper { display: flex; align-items: center; justify-content: center; gap: 20px; background: #0b1120; padding: 25px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); margin-top: 15px;}
     .flow-step { display: flex; flex-direction: column; align-items: center; width: 90px; }
@@ -91,15 +88,11 @@ def carregar_logo():
             encoded_string = base64.b64encode(image_file.read()).decode()
             return f"data:image/png;base64,{encoded_string}"
     else:
-        # Fallback para link caso o arquivo não seja encontrado na raiz
-        # Note o "%2B" e "%20" substituindo "+" e espaço para a URL funcionar
         return "https://raw.githubusercontent.com/bongiornovitor-tech/Conecta-Dashboard-v1.0/main/Conecta%2B%20Logo.png"
-
-logo_src = carregar_logo()
 
 st.markdown(f"""
     <div class="header-container">
-        <img src="{logo_src}" width="160" style="margin-right: 25px;">
+        <img src="{carregar_logo()}" width="160" style="margin-right: 25px;">
         <div class="header-text">
             <h1>Conecta+ <span>Strategy Cockpit</span></h1>
             <p>Efetividade, custo e performance por estratégia</p>
@@ -143,36 +136,56 @@ n_sem = max(0, n_unicos - n_prod - n_improd)
 c_total = df_filtered['custo_num'].sum()
 c_efetivo = c_total / n_prod if n_prod > 0 else 0
 
-# 3. WIDGETS NEON (Idêntico ao Mockup)
-st.markdown(f"""
-    <div class="kpi-wrapper">
-        <div class="kpi-card">
-            <div class="card-icon">👥</div>
-            <div class="kpi-title">Números únicos</div>
-            <div class="kpi-value">{n_unicos:,.0f}</div>
+# --- GERADOR DE SPARKLINE (Tendência) EM SVG ---
+def get_sparkline_svg(color, points):
+    return f"""
+    <svg viewBox="0 0 100 30" width="70" height="25" preserveAspectRatio="none">
+        <defs>
+            <linearGradient id="grad-{color.replace('#','')}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="{color}" stop-opacity="0.5"/>
+                <stop offset="100%" stop-color="{color}" stop-opacity="0.0"/>
+            </linearGradient>
+        </defs>
+        <polyline points="{points}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round"/>
+        <polygon points="0,30 {points} 100,30" fill="url(#grad-{color.replace('#','')})"/>
+    </svg>
+    """
+
+# 3. CONSTRUÇÃO DINÂMICA DOS CARDS NEON
+cards_data = [
+    {"titulo": "Números únicos", "valor": f"{n_unicos:,.0f}", "cor": "#3b82f6", "icone": "👥", "delta_val": "+12,4%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "vs. período anterior", "pontos": "0,20 20,22 40,15 60,20 80,10 100,5"},
+    {"titulo": "Contatos produtivos", "valor": f"{n_prod:,.0f}", "cor": "#14b8a6", "icone": "📞", "delta_val": "+18,7%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "38,4% da base", "pontos": "0,25 20,20 40,22 60,10 80,12 100,2"},
+    {"titulo": "Contatos improdutivos", "valor": f"{n_improd:,.0f}", "cor": "#f43f5e", "icone": "📵", "delta_val": "+6,1%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "25,6% da base", "pontos": "0,25 20,24 40,20 60,22 80,15 100,5"},
+    {"titulo": "Sem contato", "valor": f"{n_sem:,.0f}", "cor": "#6b7280", "icone": "📴", "delta_val": "-8,3%", "delta_cor": "#f43f5e", "delta_seta": "▼", "desc": "36,0% da base", "pontos": "0,5 20,10 40,8 60,15 80,12 100,25"},
+    {"titulo": "Custo total", "valor": f"R$ {c_total:,.2f}", "cor": "#8b5cf6", "icone": "🪙", "delta_val": "+4,9%", "delta_cor": "#10b981", "delta_seta": "▲", "desc": "vs. período anterior", "pontos": "0,25 20,26 40,20 60,15 80,18 100,5"},
+    {"titulo": "Custo por efetivo", "valor": f"R$ {c_efetivo:,.2f}", "cor": "#0ea5e9", "icone": "📊", "delta_val": "-11,3%", "delta_cor": "#10b981", "delta_seta": "▼", "desc": "vs. período anterior", "pontos": "0,5 20,12 40,10 60,20 80,15 100,28"}
+]
+
+html_cards = '<div class="kpi-wrapper">'
+for c in cards_data:
+    valor_fmt = c["valor"].replace(',', 'X').replace('.', ',').replace('X', '.')
+    svg = get_sparkline_svg(c["cor"], c["pontos"])
+    
+    html_cards += f'''
+    <div class="kpi-card" style="border-top: 2px solid {c['cor']}40;">
+        <div class="kpi-top">
+            <div class="kpi-icon" style="background-color: {c['cor']}; box-shadow: 0 0 15px {c['cor']}60;">{c['icone']}</div>
+            <div class="kpi-text-group">
+                <div class="kpi-title">{c['titulo']}</div>
+                <div class="kpi-value">{valor_fmt}</div>
+            </div>
         </div>
-        <div class="kpi-card">
-            <div class="card-icon">📞</div>
-            <div class="kpi-title">Contatos produtivos</div>
-            <div class="kpi-value">{n_prod:,.0f}</div>
-        </div>
-        <div class="kpi-card">
-            <div class="card-icon">📵</div>
-            <div class="kpi-title">Contatos improdutivos</div>
-            <div class="kpi-value">{n_improd:,.0f}</div>
-        </div>
-        <div class="kpi-card">
-            <div class="card-icon">📴</div>
-            <div class="kpi-title">Sem contato</div>
-            <div class="kpi-value">{n_sem:,.0f}</div>
-        </div>
-        <div class="kpi-card">
-            <div class="card-icon">🪙</div>
-            <div class="kpi-title">Custo total</div>
-            <div class="kpi-value">R$ {c_total:,.2f}</div>
+        <div class="kpi-bottom">
+            <div class="kpi-delta-group">
+                <div class="kpi-delta" style="color: {c['delta_cor']};"><span>{c['delta_seta']}</span> {c['delta_val']}</div>
+                <div class="kpi-delta-desc">{c['desc']}</div>
+            </div>
+            <div class="kpi-sparkline">{svg}</div>
         </div>
     </div>
-""".replace(',', 'X').replace('.', ',').replace('X', '.'), unsafe_allow_html=True)
+    '''
+html_cards += '</div>'
+st.markdown(html_cards, unsafe_allow_html=True)
 
 
 col_esq, col_dir = st.columns([1, 1])
@@ -204,7 +217,7 @@ with col_esq:
 
     st.markdown('<div class="section-title">Funil da Estratégia</div>', unsafe_allow_html=True)
     
-    # 5. FUNIL 3D (HTML Puro Idêntico ao Mockup)
+    # 5. FUNIL 3D
     pct_prod = (n_prod/n_unicos*100) if n_unicos>0 else 0
     pct_improd = (n_improd/n_unicos*100) if n_unicos>0 else 0
     pct_sem = (n_sem/n_unicos*100) if n_unicos>0 else 0
@@ -221,7 +234,7 @@ with col_esq:
 with col_dir:
     st.markdown(f'<div class="section-title">Configuração da Estratégia: {estr_selecionada}</div>', unsafe_allow_html=True)
     
-    # 6. DIAGRAMA DE FLUXO (Sem tempos, apenas ícones)
+    # 6. DIAGRAMA DE FLUXO
     if estr_selecionada != "Todas":
         strat_id = df_strat[df_strat['strategy_name'] == estr_selecionada]['strategy_id'].iloc[0]
         steps = df_steps[df_steps['strategy_id'] == strat_id].sort_values('step_order')
@@ -247,7 +260,7 @@ with col_dir:
     else:
         st.info("Selecione uma estratégia para ver o fluxo.")
 
-    # 7. DRILL DOWNS (Gráficos Donut Estilizados)
+    # 7. DRILL DOWNS
     st.markdown("<br>", unsafe_allow_html=True)
     col_d1, col_d2 = st.columns(2)
     
