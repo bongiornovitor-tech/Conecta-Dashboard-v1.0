@@ -3,99 +3,164 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Configuração da página para ocupar toda a tela e ter o título correto
+# Configuração da página e tema escuro integral
 st.set_page_config(page_title="Conecta+ Strategy Cockpit", layout="wide", initial_sidebar_state="collapsed")
 
-# Customização de CSS para o tema escuro (inspirado na imagem)
 st.markdown("""
     <style>
-    .reportview-container { background: #0b0f19; color: white; }
+    .stApp { background-color: #0b0f19; }
     .stMetric { background-color: #1a2235; padding: 15px; border-radius: 10px; }
+    div[data-testid="stMetricValue"], div[data-testid="stMetricDelta"] { color: white; }
+    h1, h2, h3, h4, p, span, div, label { color: #e2e8f0; }
+    /* Estilo para a tabela */
+    .stDataFrame { background-color: #1a2235; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("Conecta+ Strategy Cockpit")
-st.subheader("Efetividade, custo e performance por estratégia")
+st.markdown("Efetividade, custo e performance por estratégia")
 
-# --- SIMULAÇÃO DE CARREGAMENTO DE DADOS ---
-# Na prática, você usaria: pd.read_csv("url_do_seu_sheets_export") 
-# ou a biblioteca gspread para ler a aba 'dashboard_fact' e 'strategy'
-@st.cache_data
+# --- CONEXÃO COM SEUS DADOS REAIS ---
+@st.cache_data(ttl=600) # Atualiza a cada 10 min
 def load_data():
-    # URL de exportação direta do Google Sheets (exemplo para a primeira aba)
-    url = "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=csv"
-    try:
-        df = pd.read_csv(url)
-        return df
-    except:
-        # Fallback de dados baseados na estrutura que você enviou
-        return pd.DataFrame({
-            "Estratégia": ["Custo Eficiente", "Máximo Contato", "Cobrança Progressiva"],
-            "Números Únicos": [48320, 41872, 35238],
-            "% Contatos Produtivos": [42.1, 36.8, 35.9],
-            "Custo Total": [11280.50, 13940.20, 3230.05],
-            "Custo por Contato": [0.52, 0.78, 0.46]
-        })
+    # URL de exportação do seu Sheets para ler diretamente com o pandas
+    url = "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=xlsx"
+    
+    df_fact = pd.read_excel(url, sheet_name='dashboard_fact')
+    df_strat = pd.read_excel(url, sheet_name='strategy')
+    df_steps = pd.read_excel(url, sheet_name='strategy_steps')
+    
+    # Tratamento da coluna de custos (transformando "R$ 0.34" em número)
+    if 'attempt_cost' in df_fact.columns:
+        df_fact['custo_num'] = df_fact['attempt_cost'].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False).str.replace(',', '.', regex=False)
+        df_fact['custo_num'] = pd.to_numeric(df_fact['custo_num'], errors='coerce').fillna(0)
+    else:
+        df_fact['custo_num'] = 0.0
 
-df = load_data()
+    return df_fact, df_strat, df_steps
+
+df_fact, df_strat, df_steps = load_data()
 
 # --- FILTROS ---
+estrategias_disp = ["Todas"] + list(df_fact['strategy_name'].dropna().unique())
 col_periodo, col_estrategia, _ = st.columns([2, 2, 6])
 with col_periodo:
-    st.selectbox("Período", ["01 Jan 2026 - 31 Jan 2026"])
+    st.selectbox("Período", ["01 Set 2026 - 30 Set 2026"]) # Baseado nas datas da sua base
 with col_estrategia:
-    st.selectbox("Estratégia", ["Todas", "Custo Eficiente", "Máximo Contato", "Cobrança Progressiva"])
+    estr_selecionada = st.selectbox("Estratégia", estrategias_disp)
 
-# --- KPIs PRINCIPAIS ---
+# Aplica os filtros na base principal
+if estr_selecionada != "Todas":
+    df_filtered = df_fact[df_fact['strategy_name'] == estr_selecionada]
+else:
+    df_filtered = df_fact
+
+# --- CÁLCULO DE KPIs REAIS ---
+numeros_unicos = df_filtered['contact_id'].nunique()
+contatos_prod = df_filtered[df_filtered['productive_flag'] == 1]['contact_id'].nunique()
+contatos_improd = df_filtered[df_filtered['unproductive_flag'] == 1]['contact_id'].nunique()
+
+sem_contato = numeros_unicos - contatos_prod - contatos_improd
+if sem_contato < 0: sem_contato = 0
+
+custo_total = df_filtered['custo_num'].sum()
+custo_por_efetivo = custo_total / contatos_prod if contatos_prod > 0 else 0
+
 st.write("---")
 kpi1, kpi2, kpi3, kpi4, kpi5, kpi6 = st.columns(6)
-
-kpi1.metric(label="Números únicos", value="125.430", delta="+12,4%")
-kpi2.metric(label="Contatos produtivos", value="48.219", delta="+18,7%")
-kpi3.metric(label="Contatos improdutivos", value="32.105", delta="+6,1%")
-kpi4.metric(label="Sem contato", value="45.106", delta="-8,3%")
-kpi5.metric(label="Custo total", value="R$ 28.450,75", delta="+4,9%")
-kpi6.metric(label="Custo por contato efetivo", value="R$ 0,59", delta="-11,3%")
-
+kpi1.metric(label="Números únicos", value=f"{numeros_unicos:,.0f}".replace(',','.'))
+kpi2.metric(label="Contatos produtivos", value=f"{contatos_prod:,.0f}".replace(',','.'))
+kpi3.metric(label="Contatos improdutivos", value=f"{contatos_improd:,.0f}".replace(',','.'))
+kpi4.metric(label="Sem contato", value=f"{sem_contato:,.0f}".replace(',','.'))
+kpi5.metric(label="Custo total", value=f"R$ {custo_total:,.2f}".replace('.',','))
+kpi6.metric(label="Custo por contato efetivo", value=f"R$ {custo_por_efetivo:,.2f}".replace('.',','))
 st.write("---")
 
-# --- SEÇÃO INFERIOR: VISÃO POR ESTRATÉGIA E DRILL DOWN ---
+# --- VISÃO POR ESTRATÉGIA ---
 col_esq, col_dir = st.columns([1, 1])
 
 with col_esq:
     st.markdown("### Visão por Estratégia")
-    st.dataframe(df, use_container_width=True, hide_index=True)
     
-    st.markdown("### Funil da Estratégia Selecionada")
-    # Gráfico de Funil usando Plotly
+    # Cria a tabela agrupando os dados reais
+    df_grp = df_fact.groupby('strategy_name').agg(
+        unicos=('contact_id', 'nunique'),
+        custo_tot=('custo_num', 'sum')
+    ).reset_index()
+    
+    prod_grp = df_fact[df_fact['productive_flag']==1].groupby('strategy_name')['contact_id'].nunique().reset_index()
+    prod_grp.rename(columns={'contact_id': 'produtivos'}, inplace=True)
+    
+    df_grp = df_grp.merge(prod_grp, on='strategy_name', how='left').fillna(0)
+    df_grp['% contato produtivo'] = (df_grp['produtivos'] / df_grp['unicos']) * 100
+    df_grp['Custo por efetivo'] = df_grp['custo_tot'] / df_grp['produtivos']
+    
+    df_grp_show = df_grp[['strategy_name', 'unicos', '% contato produtivo', 'custo_tot', 'Custo por efetivo']].copy()
+    df_grp_show.columns = ['Estratégia', 'Números Únicos', '% Produtivos', 'Custo Total (R$)', 'Custo / Efetivo (R$)']
+    
+    st.dataframe(df_grp_show.style.format({
+        '% Produtivos': '{:.1f}%',
+        'Custo Total (R$)': 'R$ {:.2f}',
+        'Custo / Efetivo (R$)': 'R$ {:.2f}'
+    }), use_container_width=True, hide_index=True)
+
+    st.markdown(f"### Funil da Estratégia: {estr_selecionada}")
     fig_funnel = go.Figure(go.Funnel(
         y=["Números únicos", "Contatos produtivos", "Contatos improdutivos", "Sem contato"],
-        x=[48320, 20342, 12450, 15528],
+        x=[numeros_unicos, contatos_prod, contatos_improd, sem_contato],
         textinfo="value+percent initial",
         marker={"color": ["#1f77b4", "#00bfa5", "#e91e63", "#607d8b"]}
     ))
-    fig_funnel.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
+    fig_funnel.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=20, b=20))
     st.plotly_chart(fig_funnel, use_container_width=True)
 
 with col_dir:
-    st.markdown("### Configuração da Estratégia Selecionada: Custo Eficiente")
-    st.info("**Sequência:** WhatsApp Texto ➔ Ligação Tradicional (+15 min) ➔ Branded Call (+2 h) ➔ WhatsApp Call (+24 h)")
-    
-    # Gráficos de Donut (Drill Down)
+    st.markdown(f"### Configuração da Estratégia Selecionada")
+    if estr_selecionada != "Todas":
+        # Lê a aba strategy_steps de forma inteligente
+        strat_id = df_strat[df_strat['strategy_name'] == estr_selecionada]['strategy_id'].iloc[0]
+        steps = df_steps[df_steps['strategy_id'] == strat_id].sort_values('step_order')
+        
+        step_str = " ➔ ".join([f"{row['channel']} (+{row['wait_minutes']}m)" for idx, row in steps.iterrows()])
+        st.info(f"**Sequência de abordagem:** {step_str}")
+    else:
+        st.info("Selecione uma estratégia específica no filtro do topo para ver a configuração.")
+
     col_donut1, col_donut2 = st.columns(2)
     
     with col_donut1:
-        st.markdown("**Drill down — Contatos Produtivos**")
-        labels = ['Chamada tradicional', 'Branded Calls', 'WhatsApp Call', 'Agendamento WhatsApp']
-        values = [34.2, 28.6, 22.1, 13.5]
-        fig_donut1 = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.6)])
-        fig_donut1.update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=0, b=0, l=0, r=0))
-        st.plotly_chart(fig_donut1, use_container_width=True)
+        st.markdown("**Drill down — Produtivos**")
+        df_prod = df_filtered[df_filtered['productive_flag'] == 1]
+        if not df_prod.empty:
+            df_chan = df_prod['channel'].value_counts().reset_index()
+            df_chan.columns = ['Canal', 'Contatos']
+            fig_donut1 = px.pie(df_chan, values='Contatos', names='Canal', hole=.6, color_discrete_sequence=['#1f77b4', '#9467bd', '#00bfa5'])
+            fig_donut1.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.1), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig_donut1, use_container_width=True)
+        else:
+            st.write("Sem contatos produtivos")
 
     with col_donut2:
-        st.markdown("**Drill down — Contatos Improdutivos**")
-        labels = ['00-30 seg', '30 seg - 1 min', '1 - 2 min']
-        values = [52.3, 32.8, 14.9]
-        fig_donut2 = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.6)])
-        fig_donut2.update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=0, b=0, l=0, r=0))
-        st.plotly_chart(fig_donut2, use_container_width=True)
+        st.markdown("**Drill down — Improdutivos**")
+        df_improd = df_filtered[df_filtered['unproductive_flag'] == 1]
+        if not df_improd.empty:
+            df_dur = df_improd['duration_band'].value_counts().reset_index()
+            df_dur.columns = ['Duração', 'Contatos']
+            fig_donut2 = px.pie(df_dur, values='Contatos', names='Duração', hole=.6, color_discrete_sequence=['#2ca02c', '#d62728', '#ff7f0e'])
+            fig_donut2.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.1), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig_donut2, use_container_width=True)
+        else:
+            st.write("Sem contatos improdutivos")
+
+st.write("---")
+
+# --- SEÇÃO INFERIOR: CUSTOS DA ESTRATÉGIA NO PERÍODO ---
+st.markdown("### Custos da Estratégia no Período")
+col_c1, col_c2, col_c3 = st.columns(3)
+
+custo_improd_tot = df_filtered[df_filtered['unproductive_flag'] == 1]['custo_num'].sum()
+custo_por_improd = custo_improd_tot / contatos_improd if contatos_improd > 0 else 0
+
+col_c1.metric(label="Custo por contato efetivo", value=f"R$ {custo_por_efetivo:,.2f}".replace('.',','))
+col_c2.metric(label="Custo por contato improdutivo", value=f"R$ {custo_por_improd:,.2f}".replace('.',','))
+col_c3.metric(label="Custo total da estratégia", value=f"R$ {custo_total:,.2f}".replace('.',','))
