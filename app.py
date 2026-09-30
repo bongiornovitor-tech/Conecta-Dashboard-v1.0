@@ -92,11 +92,11 @@ CSS = """
 .config-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:12px;}.config-head h3{font-size:22px;font-weight:800;}.meta{display:flex;gap:6px;}.meta>div{background:#031b38;border:1px solid #153e68;border-radius:6px;padding:5px 9px;}.meta small{color:var(--muted);font-size:10px;display:block;}.sequence-label{color:#d4e2ff;font-size:12px;margin-bottom:7px;}.flow{display:flex;gap:8px;align-items:center;margin-bottom:13px;}.step{flex:1;min-width:0;}.step-card{border:1px solid #164579;background:#041e3a;border-radius:7px;display:flex;align-items:center;gap:8px;padding:8px;font-size:10px;min-height:52px;}.step-card .icon{width:31px;height:31px;border-radius:8px;}.step-card svg{width:18px;height:18px;}.arrow{color:#9cbcef;font-size:20px;}.cost-settings{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #164579;border-radius:6px;overflow:hidden;}.cost-settings>div{text-align:center;padding:6px 3px;background:#041e3b;border-right:1px solid #164579;}.cost-settings small{display:block;font-size:9px;color:var(--muted);min-height:25px;}.cost-settings b{font-size:12px;}
 .bottom{display:grid;grid-template-columns:minmax(0,.73fr) minmax(0,1fr) minmax(0,.75fr);gap:10px;margin-top:10px;align-items:stretch;}.funnel-panel{grid-row:span 2;}.funnel{padding:17px 8px 4px;}.funnel-row{display:flex;align-items:center;gap:9px;height:63px;}.funnel-shape{width:77%;display:flex;justify-content:center;}.funnel-layer{height:59px;display:flex;flex-direction:column;align-items:center;justify-content:center;clip-path:polygon(0 0,100% 0,91% 91%,87% 100%,13% 100%,9% 91%);background:linear-gradient(100deg,color-mix(in srgb,var(--accent) 65%,#002060),var(--accent),color-mix(in srgb,var(--accent) 70%,#001342));border-top:3px solid #ffffff44;filter:drop-shadow(0 0 7px var(--accent));font-size:11px;text-align:center;}.funnel-layer b{font-size:20px;line-height:1.2;}.funnel-pct{flex:1;color:#d9e5ff;font-size:12px;position:relative;}.funnel-pct:before{content:'';display:block;width:100%;border-top:1px dashed #789ed4;margin-bottom:3px;}.funnel-note{background:#06203e;border:1px solid #174579;border-radius:7px;padding:9px 11px;margin:12px 3px 3px;color:#b9ccec;font-size:10px;}
 .drill-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:10px;padding:10px 12px;}.donut-wrap{display:flex;align-items:center;gap:10px;min-width:0;}.donut{width:125px;min-width:95px;max-width:44%;aspect-ratio:1;position:relative;border-radius:50%;background:var(--segments);box-shadow:inset 0 0 18px #ffffff20;}.donut:after{content:'';position:absolute;inset:21%;border-radius:50%;background:#00172e;box-shadow:0 0 10px #0008;}.donut-center{position:absolute;inset:23%;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:9px;line-height:1.2;}.donut-center b{font-size:16px;}.legend{flex:1;min-width:0;}.legend-row{display:flex;gap:5px;align-items:center;font-size:9px;margin:7px 0;}.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;box-shadow:inset 0 0 3px #fff7;}.legend-name{flex:1;overflow-wrap:anywhere;}.legend-row b{font-size:9px;white-space:nowrap;}.mini-title{font-size:10px;color:#c8d8f7;margin-bottom:8px;}.duration-table{width:100%;border-collapse:collapse;font-size:9px;background:#041e3a;}.duration-table td,.duration-table th{padding:6px 5px;border:1px solid #153c65;text-align:left;font-weight:400;}.duration-table th{color:var(--muted);}.duration-table td:last-child{text-align:right;white-space:nowrap;}
-.cost-panel{grid-column:2/4;}.cost-body{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;padding:9px;}.cost-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}.mini-kpi{padding:9px;background:#05223f;border:1px solid #163e65;border-radius:7px;}.mini-kpi small{font-size:9px;color:#c5d6f7;display:block;}.mini-kpi b{font-size:17px;display:block;margin-top:6px;white-space:nowrap;}.stacked{display:flex;height:23px;border-radius:6px;overflow:hidden;}.stacked span{display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;min-width:0;}.cost-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 12px;margin-top:6px;}.empty{color:var(--muted);padding:25px 10px;text-align:center;font-size:12px;}.caption{color:#7f99bc;font-size:10px;margin-top:10px;}
+.cost-panel{grid-column:2/4;}.cost-body{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;padding:9px;}.cost-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}.mini-kpi{padding:15px 12px;min-height:100px;display:flex;flex-direction:column;justify-content:center;background:#05223f;border:1px solid #163e65;border-radius:7px;}.mini-kpi small{font-size:11px;color:#c5d6f7;display:block;}.mini-kpi b{font-size:clamp(24px,2.2vw,34px);font-weight:800;letter-spacing:-.5px;display:block;margin-top:10px;line-height:1.2;white-space:normal;overflow-wrap:anywhere;}.stacked{display:flex;height:23px;border-radius:6px;overflow:hidden;}.stacked span{display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;min-width:0;}.cost-legend .legend-row b{font-size:13px;}.cost-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 12px;margin-top:6px;}.empty{color:var(--muted);padding:25px 10px;text-align:center;font-size:12px;}.caption{color:#7f99bc;font-size:10px;margin-top:10px;}
 @media(min-width:1600px){.kpi{min-height:130px;}.panel-title{font-size:18px;}.strategy-table td{padding:13px 8px;}.drill-body{padding:13px;}.donut{width:150px;}.funnel-row{height:69px;}.funnel-layer{height:65px;}}
 @media(max-width:1250px){.hero{grid-template-columns:180px 1fr;}.use-cases{display:none;}.kpis{grid-template-columns:repeat(3,minmax(0,1fr));}.kpi-value{font-size:25px;}.bottom{grid-template-columns:minmax(0,.85fr) minmax(0,1.3fr);}.funnel-panel{grid-row:span 2;}.cost-panel{grid-column:1/3;}.drill-body{grid-template-columns:1.2fr 1fr;}.config-head{flex-wrap:wrap;}.meta{width:100%;}.meta>div{flex:1;}.flow{gap:5px;}.step-card{flex-direction:column;text-align:center;padding:7px 3px;}.cost-body{grid-template-columns:1fr 1fr;}}
 @media(max-width:850px){.dashboard{grid-template-columns:1fr;}.hero{gap:14px;grid-template-columns:150px 1fr;}.hero h1{font-size:28px;}.brand{font-size:19px;}.bottom{grid-template-columns:1fr 1fr;}.funnel-panel{grid-row:auto;grid-column:1/3;}.funnel{max-width:500px;margin:auto;}.drill-body{grid-template-columns:1fr;}.cost-body{grid-template-columns:1fr;}.donut{width:125px;}.step-card{flex-direction:row;text-align:left;}.panel-title{font-size:14px;}}
-@media(max-width:560px){[data-testid="stMainBlockContainer"],.block-container{padding:.7rem .6rem 1.3rem;}.hero{grid-template-columns:1fr;gap:12px;padding:2px 4px 16px;}.brand small{display:none;}.hero h1{font-size:28px;letter-spacing:-1px;}.hero p{font-size:12px;}.kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}.kpi{padding:10px;min-height:120px;}.kpi-head{gap:7px;}.kpi .icon{width:32px;height:32px;border-radius:8px;}.kpi .icon svg{width:20px;height:20px;}.kpi-label{font-size:9px;}.kpi-value{font-size:clamp(15px,4.6vw,19px);white-space:normal;overflow-wrap:anywhere;}.kpi-head>div{min-width:0;}.kpi-foot{margin-top:12px;}.delta{font-size:10px;}.sub{font-size:9px;}.bottom{grid-template-columns:1fr;}.funnel-panel,.cost-panel{grid-column:auto;}.drill-body{grid-template-columns:1fr 1fr;}.donut-wrap{flex-direction:column;}.donut{width:130px;max-width:100%;}.legend{width:100%;}.config-head h3{font-size:20px;}.flow{flex-wrap:wrap;}.step{flex:1 1 40%;}.arrow{display:none;}.step-card{font-size:11px;}.cost-settings{grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;border:0;}.cost-settings>div{border:1px solid #164579;border-radius:5px;}.cost-settings small{min-height:0;margin-bottom:3px;}.strategy-table th{font-size:8px;padding:7px 4px;}.strategy-table td{font-size:10px;padding:10px 4px;}.strategy-table th:first-child{width:31%;}.strategy-name{font-size:10px;}.strategy-name:before{display:none;}.strategy-desc{padding-left:0;font-size:8px;}.cost-cards{gap:4px;}.mini-kpi{padding:7px 5px;}.mini-kpi b{font-size:14px;}.panel-title{font-size:13px;padding:9px;}.tag{font-size:9px;}.badge{font-size:8px;}.panel-body{padding:10px;}}
+@media(max-width:560px){[data-testid="stMainBlockContainer"],.block-container{padding:.7rem .6rem 1.3rem;}.hero{grid-template-columns:1fr;gap:12px;padding:2px 4px 16px;}.brand small{display:none;}.hero h1{font-size:28px;letter-spacing:-1px;}.hero p{font-size:12px;}.kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}.kpi{padding:10px;min-height:120px;}.kpi-head{gap:7px;}.kpi .icon{width:32px;height:32px;border-radius:8px;}.kpi .icon svg{width:20px;height:20px;}.kpi-label{font-size:9px;}.kpi-value{font-size:clamp(15px,4.6vw,19px);white-space:normal;overflow-wrap:anywhere;}.kpi-head>div{min-width:0;}.kpi-foot{margin-top:12px;}.delta{font-size:10px;}.sub{font-size:9px;}.bottom{grid-template-columns:1fr;}.funnel-panel,.cost-panel{grid-column:auto;}.drill-body{grid-template-columns:1fr 1fr;}.donut-wrap{flex-direction:column;}.donut{width:130px;max-width:100%;}.legend{width:100%;}.config-head h3{font-size:20px;}.flow{flex-wrap:wrap;}.step{flex:1 1 40%;}.arrow{display:none;}.step-card{font-size:11px;}.cost-settings{grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;border:0;}.cost-settings>div{border:1px solid #164579;border-radius:5px;}.cost-settings small{min-height:0;margin-bottom:3px;}.strategy-table th{font-size:8px;padding:7px 4px;}.strategy-table td{font-size:10px;padding:10px 4px;}.strategy-table th:first-child{width:31%;}.strategy-name{font-size:10px;}.strategy-name:before{display:none;}.strategy-desc{padding-left:0;font-size:8px;}.cost-cards{gap:4px;}.mini-kpi{padding:7px 5px;}.mini-kpi b{font-size:22px;}.panel-title{font-size:13px;padding:9px;}.tag{font-size:9px;}.badge{font-size:8px;}.panel-body{padding:10px;}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;}}
 </style>
 """
@@ -350,7 +350,19 @@ Os registros excluídos não são tentativas executadas. Use a coorte executáve
 comparações e informe diferença em relação aos KPIs do dashboard quando relevante.
 Não confunda contatos únicos com tentativas ou atendimento com resultado comercial.
 Se não houver DDD, origem, segmento ou conversão, informe que não pode avaliar isso.
-Máximo três recomendações. Cite evidências com referência aos campos/recortes recebidos.
+Máximo três recomendações. Cite evidências com números e comparações em português.
+Escreva para um gestor SEM conhecimento de banco de dados ou telefonia.
+NUNCA exponha nomes de campos, tabelas, status em inglês ou códigos SIP nas respostas.
+Não escreva por_resultado_codigo, hangup_cause, contact_result, retry_count, coorte,
+status, flag, opt-in ou nomes com underscore. Traduza conceitos para linguagem comum.
+Exemplos: rang_not_answered = telefone tocou, mas não foi atendido; busy = telefone
+ocupado; whatsapp_optin_no_reply = pedido de autorização para chamada pelo WhatsApp
+sem resposta. excluded_after_success = registros descartados porque o contato já
+havia sido concluído. Sem contato não comprova recusa nem telefone inválido.
+Prefira 'grupo de pessoas', 'pedido de autorização', 'tentativas', 'público'.
+Explique o raciocínio: o que observamos, o que pode significar e qual decisão tomar.
+Use frases curtas, comparações claras e percentuais apenas quando calculáveis.
+Não enumere categorias técnicas. Agrupe motivos e explique a consequência comercial.
 Confiança qualitativa: alta, média ou baixa, não percentuais inventados.
 A linha do tempo deve ser plano de teste/validação em 7, 14 e 30 dias, NÃO previsão
 numérica. Sem experimento/modelo estatístico, ganho projetado é não estimado.
@@ -428,6 +440,51 @@ def build_ai_context(df, strategies, steps, selected, start, end):
     return clean(context)
 
 
+AI_BUSINESS_NAMES = {
+    "por_resultado_codigo":"motivos observados nas tentativas", "contact_result":"resultado da tentativa",
+    "hangup_cause":"retorno técnico", "channel":"canal", "hour":"hora do dia",
+    "retry_count":"número de novas tentativas", "strategy_name":"estratégia",
+    "rang_not_answered":"telefone tocou, mas não foi atendido", "busy":"telefone ocupado",
+    "unreachable":"não foi possível alcançar o telefone", "filtered":"chamada filtrada, motivo comercial não comprovado",
+    "productive":"contato produtivo", "unproductive":"contato improdutivo",
+    "excluded_after_success":"registro descartado após contato concluído", "technical_exclusion":"registro excluído, sem tentativa executada",
+    "whatsapp_optin_no_reply":"pedido de autorização para chamada pelo WhatsApp sem resposta",
+    "whatsapp_optin_granted":"autorização para chamada pelo WhatsApp concedida",
+    "whatsapp_optin_declined":"autorização para chamada pelo WhatsApp recusada",
+    "whatsapp_text_productive":"conversa por texto após pedido de autorização, com resultado produtivo",
+    "whatsapp_text_unproductive":"conversa por texto após pedido de autorização, sem resultado produtivo",
+    "traditional_call":"telefonia tradicional", "branded_call":"chamada com identificação da marca",
+    "whatsapp_call":"chamada pelo WhatsApp", "whatsapp_text":"texto associado à chamada pelo WhatsApp",
+    "kpis_dashboard":"indicadores do dashboard", "kpis_registros_executaveis":"indicadores das tentativas consideradas executadas",
+    "tentativas_executaveis":"tentativas consideradas executadas", "registros_excluidos":"registros que não são tentativas executadas",
+    "por_canal_horario":"resultados por canal e hora do dia", "por_retry":"resultados por número de novas tentativas",
+    "optin_generated_flag":"autorizações concedidas", "template_sent_flag":"pedidos de autorização enviados",
+    "template_replied_flag":"respostas aos pedidos de autorização", "optin":"pedidos de autorização pelo WhatsApp",
+}
+
+
+def business_context(value):
+    if isinstance(value,dict):
+        return {AI_BUSINESS_NAMES.get(str(k),str(k).replace("_"," ")):business_context(v) for k,v in value.items() if k not in ["hangup_cause","campos_disponiveis"]}
+    if isinstance(value,list):
+        return [business_context(v) for v in value]
+    if isinstance(value,str):
+        return AI_BUSINESS_NAMES.get(value,value)
+    return value
+
+
+def business_text(value):
+    if isinstance(value,dict):return {k:business_text(v) for k,v in value.items()}
+    if isinstance(value,list):return [business_text(v) for v in value]
+    if isinstance(value,str):
+        for source,label in sorted(AI_BUSINESS_NAMES.items(),key=lambda item:len(item[0]),reverse=True):
+            value=re.sub(r"(?<![\w])"+re.escape(source)+r"(?![\w])",lambda _:label,value,flags=re.IGNORECASE)
+        value=re.sub(r"\bopt[- ]in\b","autorização para chamada",value,flags=re.IGNORECASE)
+        value=re.sub(r"\bcoorte\b","grupo de pessoas",value,flags=re.IGNORECASE)
+        return value
+    return value
+
+
 class AIAnalysisError(Exception):
     pass
 
@@ -494,7 +551,7 @@ def run_gemini_analysis(context,prompt):
         raise AIAnalysisError("O nome do modelo nos Secrets é inválido.")
     payload = {
         "systemInstruction":{"parts":[{"text":AI_SYSTEM}]},
-        "contents":[{"role":"user","parts":[{"text":json.dumps({"pergunta":prompt,"contexto":context},ensure_ascii=False,allow_nan=False)}]}],
+        "contents":[{"role":"user","parts":[{"text":json.dumps({"pergunta":prompt,"contexto":business_context(context)},ensure_ascii=False,allow_nan=False)}]}],
         "generationConfig":{"responseMimeType":"application/json","responseSchema":ai_schema(),"maxOutputTokens":8192},
     }
     st.session_state.pop("ai_diagnostics",None)
@@ -535,7 +592,7 @@ def run_gemini_analysis(context,prompt):
         return bool(re.search(r"retentativ|\bretr(?:y|ies)\b|regua de insistencia|cadencia|number rotation|rotacao de numeros|call screening|\bamd\b|failover|caixa postal|operadora|maxim[oa].{0,35}tentativ|limit.{0,35}tentativ|tentativ.{0,35}limit|teto.{0,35}tentativ|interval.{0,35}(?:chamad|tentativ)",normalized))
     result["recomendacoes"] = [row for row in result["recomendacoes"] if not operational(row["titulo"]+" "+row["acao"]+" "+row["validacao"])]
     result["linha_do_tempo"] = [row for row in result["linha_do_tempo"] if not operational(row["acao"]+" "+row["indicador"])]
-    return result
+    return business_text(result)
 
 
 def set_ai_prompt(value):
