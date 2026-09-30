@@ -689,9 +689,15 @@ def check_groq_budget(payload, key, model):
     return budget_id,estimate
 
 
-def groq_request(messages, structured=True, output_limit=1800):
+class AIOutputIncomplete(AIAnalysisError):
+    pass
+
+
+def groq_request(messages, structured=True, output_limit=3000):
     key, model = groq_config()
     payload = {"model": model, "messages": messages, "max_completion_tokens": output_limit}
+    if model in ["openai/gpt-oss-120b","openai/gpt-oss-20b"]:
+        payload["reasoning_effort"] = "low"
     if structured:
         schema = ai_schema()
         def strict_schema(node):
@@ -714,6 +720,12 @@ def groq_request(messages, structured=True, output_limit=1800):
     record_groq_usage(response, budget_id, payload, estimate)
     if response.status_code == 413:
         raise AIRequestTooLarge("Não foi possível concluir a análise neste momento. Tente novamente mais tarde.")
+    if response.status_code == 400:
+        try: message = str(response.json().get("error",{}).get("message",""))
+        except (ValueError,TypeError,AttributeError): message = ""
+        if "max_completion_tokens" in message and any(term in message.lower() for term in ["truncat","max completion tokens reached","missing required"]):
+            st.session_state.ai_diagnostics = "Resposta incompleta detectada; recuperação automática solicitada."
+            raise AIOutputIncomplete("Não foi possível concluir uma resposta completa neste momento. Tente novamente mais tarde.")
     if response.status_code != 200:
         st.session_state.ai_diagnostics = gemini_error_details(response, key)
         messages = {400:"A Groq recusou a configuração. Confira o modelo e os detalhes da conexão.",401:"Chave Groq inválida. Confira [ai].api_key nos Secrets.",403:"A chave não tem acesso ao modelo na Groq.",404:"Modelo não disponível na Groq. Confira [ai].model.",413:"O resumo ficou grande demais. Selecione uma estratégia ou um período menor.",429:"A análise está temporariamente indisponível. Sua pergunta e seus filtros foram mantidos; tente novamente mais tarde.",500:"A Groq está indisponível. Tente novamente mais tarde.",503:"A Groq está indisponível. Tente novamente mais tarde."}
@@ -723,8 +735,10 @@ def groq_request(messages, structured=True, output_limit=1800):
         raise AIAnalysisError(messages.get(response.status_code,"A Groq não confirmou a análise. Confira os detalhes da conexão."))
     try:
         choice = response.json()["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise AIOutputIncomplete("Não foi possível concluir uma resposta completa neste momento. Tente novamente mais tarde.")
         if choice.get("finish_reason") != "stop":
-            raise AIAnalysisError("A resposta foi interrompida. Tente uma pergunta mais específica ou um recorte menor.")
+            raise AIAnalysisError("Não foi possível concluir a análise neste momento. Tente novamente mais tarde.")
         content = choice["message"]["content"]
         if not isinstance(content, str) or not content.strip(): raise ValueError()
     except (KeyError,IndexError,TypeError,ValueError):
@@ -757,7 +771,7 @@ def compact_ai_context(context, prompt, minimal=False):
     def size():
         return len((AI_SYSTEM + prompt + json.dumps(business_context(summary),ensure_ascii=False,separators=(",",":"))).encode("utf-8"))
     # Margem para schema, resposta e diferença entre caracteres e tokens; não é tokenização exata.
-    budget = 7500 if minimal else 10000
+    budget = 5000 if minimal else 6500
     for name,rows in details:
         ranked = sorted(rows,key=lambda r:r.get("tentativas",0),reverse=True)
         summary[name] = []
@@ -780,7 +794,7 @@ def run_ai_analysis(context, prompt):
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"groq-output-v2"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -790,14 +804,16 @@ def run_ai_analysis(context, prompt):
         result = run_gemini_analysis(context, prompt)
     else:
         summary, premises = compact_ai_context(context, prompt)
-        def messages_for(value):
-            return [{"role":"system","content":AI_SYSTEM + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
+        def messages_for(value, recovery=False):
+            brevity = "\nComplete todos os campos do JSON. Resumo até 300 caracteres. Cada campo de recomendação até 160 caracteres. Cada campo da linha do tempo até 120 caracteres. Até 2 limitações curtas."
+            if recovery: brevity += "\nNesta resposta, use somente 1 recomendação principal e 3 etapas curtas; mantenha todas as propriedades obrigatórias."
+            return [{"role":"system","content":AI_SYSTEM + brevity + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
         try:
             content = groq_request(messages_for(summary))
-        except AIRequestTooLarge:
+        except (AIRequestTooLarge, AIOutputIncomplete):
             # Recuperação única: mantém o intervalo e os indicadores, reduz detalhes.
             summary, premises = compact_ai_context(context, prompt, minimal=True)
-            content = groq_request(messages_for(summary), output_limit=1200)
+            content = groq_request(messages_for(summary, recovery=True), output_limit=3500)
         try:
             result = finish_ai_result(validate_ai_result(json.loads(content)))
         except (ValueError,TypeError):
