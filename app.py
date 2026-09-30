@@ -1,20 +1,42 @@
 """Conecta+ Strategy Cockpit — layout responsivo inspirado no mockup.
 Execute: streamlit run app.py. Dependências: streamlit, pandas, requests, openpyxl.
-A planilha e as três abas do app original são preservadas.
+A planilha e as abas do app original são preservadas.
+CONFIGURAÇÃO DA GRAVAÇÃO (uma vez no Streamlit Cloud):
+1. Adicione google-auth ao requirements.txt (junto de streamlit, pandas,
+   requests e openpyxl).
+2. No Google Cloud, habilite Google Sheets API, crie uma conta de serviço
+   e sua chave JSON. Compartilhe APENAS a planilha com o client_email dessa
+   chave, como Editor.
+3. Em Streamlit > Settings > Secrets, adicione os campos da chave sob
+   [gcp_service_account], incluindo type, project_id, private_key_id,
+   private_key, client_email, client_id, token_uri. Para private_key use
+   uma string TOML multilinha com as quebras de linha da chave JSON.
+4. Opcionalmente defina spreadsheet_id nos Secrets. O padrão é a planilha
+   original. Não coloque a chave no GitHub.
+As atualizações alteram apenas cinco células da linha da estratégia em
+cost_parameters. Custos históricos em dashboard_fact NÃO são reescritos.
 """
 import html
 import io
 import math
 import os
 import re
+from urllib.parse import quote
 
 import pandas as pd
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Conecta+ Strategy Cockpit", page_icon="☎", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Conecta+ Strategy Cockpit", page_icon="☎", layout="wide", initial_sidebar_state="expanded")
 SHEET_URL = os.getenv("CONECTA_SHEET_URL", "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=xlsx")
 COLORS = ["#168bff", "#983bff", "#00dcc0", "#8aa8ff", "#f33b91"]
+COST_LABELS = {
+    "cost_branded_call": "Chamada com identificação da marca (R$/chamada)",
+    "cost_whatsapp_template": "Mensagem de consentimento WhatsApp (R$/mensagem)",
+    "cost_meta_minute": "Chamada pelo WhatsApp — Meta (R$/minuto)",
+    "cost_productive_minute": "Ligação produtiva (R$/minuto)",
+    "cost_unproductive_minute": "Ligação improdutiva (R$/minuto)",
+}
 CHANNELS = {"traditional_call": "Chamada tradicional", "branded_call": "Branded Call", "whatsapp_call": "WhatsApp Call", "whatsapp_text": "WhatsApp texto"}
 
 CSS = """
@@ -50,7 +72,7 @@ CSS = """
 .kpi-foot{display:flex;justify-content:space-between;align-items:end;gap:4px;margin-top:13px;}.delta{font-size:12px;font-weight:700;}.sub{font-size:10px;color:var(--muted);margin-top:3px;}.spark{width:46%;height:35px;overflow:visible;}
 .dashboard{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);gap:10px;}.panel-title{padding:10px 13px 8px;font-size:16px;font-weight:800;border-bottom:1px solid #174475;display:flex;justify-content:space-between;align-items:center;gap:8px;}.panel-body{padding:10px 13px;}.badge{font-size:10px;font-weight:500;white-space:nowrap;color:#00eac6;background:#00373e;border:1px solid #00606a;padding:4px 8px;border-radius:6px;}.tag{font-size:11px;color:#d5e1ff;font-weight:500;background:#061c3a;padding:3px 9px;border:1px solid #164579;border-radius:5px;}
 .strategy-table{width:100%;border-collapse:collapse;table-layout:fixed;}.strategy-table th{font-size:10px;font-weight:500;color:#c8d5f4;text-align:left;padding:8px 8px;}.strategy-table td{padding:10px 8px;border-top:1px solid #164579;vertical-align:middle;font-size:12px;}.strategy-table th:first-child{width:34%;}.strategy-table tr.active{background:linear-gradient(90deg,#082571,#061c42);box-shadow:inset 0 0 16px #225cff55;}.strategy-name{font-weight:700;font-size:13px;}.strategy-name:before{content:'○';font-size:19px;color:#acc1ff;margin-right:7px;}.active .strategy-name:before{content:'◉';color:#2993ff;}.strategy-desc{font-size:10px;color:var(--muted);padding-left:23px;margin-top:2px;}.bar{height:7px;background:#103365;border-radius:3px;margin-top:7px;overflow:hidden;}.bar>i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 65%,white));}
-.config-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:12px;}.config-head h3{font-size:22px;font-weight:800;}.meta{display:flex;gap:6px;}.meta>div{background:#031b38;border:1px solid #153e68;border-radius:6px;padding:5px 9px;}.meta small{color:var(--muted);font-size:10px;display:block;}.sequence-label{color:#d4e2ff;font-size:12px;margin-bottom:7px;}.flow{display:flex;gap:8px;align-items:center;margin-bottom:13px;}.step{flex:1;min-width:0;}.step-card{border:1px solid #164579;background:#041e3a;border-radius:7px;display:flex;align-items:center;gap:8px;padding:8px;font-size:10px;min-height:52px;}.step-card .icon{width:31px;height:31px;border-radius:8px;}.step-card svg{width:18px;height:18px;}.step-time{text-align:center;font-size:10px;color:var(--muted);margin-top:5px;}.arrow{color:#9cbcef;font-size:20px;}.cost-settings{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #164579;border-radius:6px;overflow:hidden;}.cost-settings>div{text-align:center;padding:6px 3px;background:#041e3b;border-right:1px solid #164579;}.cost-settings small{display:block;font-size:9px;color:var(--muted);min-height:25px;}.cost-settings b{font-size:12px;}
+.config-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:12px;}.config-head h3{font-size:22px;font-weight:800;}.meta{display:flex;gap:6px;}.meta>div{background:#031b38;border:1px solid #153e68;border-radius:6px;padding:5px 9px;}.meta small{color:var(--muted);font-size:10px;display:block;}.sequence-label{color:#d4e2ff;font-size:12px;margin-bottom:7px;}.flow{display:flex;gap:8px;align-items:center;margin-bottom:13px;}.step{flex:1;min-width:0;}.step-card{border:1px solid #164579;background:#041e3a;border-radius:7px;display:flex;align-items:center;gap:8px;padding:8px;font-size:10px;min-height:52px;}.step-card .icon{width:31px;height:31px;border-radius:8px;}.step-card svg{width:18px;height:18px;}.arrow{color:#9cbcef;font-size:20px;}.cost-settings{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid #164579;border-radius:6px;overflow:hidden;}.cost-settings>div{text-align:center;padding:6px 3px;background:#041e3b;border-right:1px solid #164579;}.cost-settings small{display:block;font-size:9px;color:var(--muted);min-height:25px;}.cost-settings b{font-size:12px;}
 .bottom{display:grid;grid-template-columns:minmax(0,.73fr) minmax(0,1fr) minmax(0,.75fr);gap:10px;margin-top:10px;align-items:stretch;}.funnel-panel{grid-row:span 2;}.funnel{padding:17px 8px 4px;}.funnel-row{display:flex;align-items:center;gap:9px;height:63px;}.funnel-shape{width:77%;display:flex;justify-content:center;}.funnel-layer{height:59px;display:flex;flex-direction:column;align-items:center;justify-content:center;clip-path:polygon(0 0,100% 0,91% 91%,87% 100%,13% 100%,9% 91%);background:linear-gradient(100deg,color-mix(in srgb,var(--accent) 65%,#002060),var(--accent),color-mix(in srgb,var(--accent) 70%,#001342));border-top:3px solid #ffffff44;filter:drop-shadow(0 0 7px var(--accent));font-size:11px;text-align:center;}.funnel-layer b{font-size:20px;line-height:1.2;}.funnel-pct{flex:1;color:#d9e5ff;font-size:12px;position:relative;}.funnel-pct:before{content:'';display:block;width:100%;border-top:1px dashed #789ed4;margin-bottom:3px;}.funnel-note{background:#06203e;border:1px solid #174579;border-radius:7px;padding:9px 11px;margin:12px 3px 3px;color:#b9ccec;font-size:10px;}
 .drill-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:10px;padding:10px 12px;}.donut-wrap{display:flex;align-items:center;gap:10px;min-width:0;}.donut{width:125px;min-width:95px;max-width:44%;aspect-ratio:1;position:relative;border-radius:50%;background:var(--segments);box-shadow:inset 0 0 18px #ffffff20;}.donut:after{content:'';position:absolute;inset:21%;border-radius:50%;background:#00172e;box-shadow:0 0 10px #0008;}.donut-center{position:absolute;inset:23%;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:9px;line-height:1.2;}.donut-center b{font-size:16px;}.legend{flex:1;min-width:0;}.legend-row{display:flex;gap:5px;align-items:center;font-size:9px;margin:7px 0;}.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;box-shadow:inset 0 0 3px #fff7;}.legend-name{flex:1;overflow-wrap:anywhere;}.legend-row b{font-size:9px;white-space:nowrap;}.mini-title{font-size:10px;color:#c8d8f7;margin-bottom:8px;}.duration-table{width:100%;border-collapse:collapse;font-size:9px;background:#041e3a;}.duration-table td,.duration-table th{padding:6px 5px;border:1px solid #153c65;text-align:left;font-weight:400;}.duration-table th{color:var(--muted);}.duration-table td:last-child{text-align:right;white-space:nowrap;}
 .cost-panel{grid-column:2/4;}.cost-body{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;padding:9px;}.cost-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}.mini-kpi{padding:9px;background:#05223f;border:1px solid #163e65;border-radius:7px;}.mini-kpi small{font-size:9px;color:#c5d6f7;display:block;}.mini-kpi b{font-size:17px;display:block;margin-top:6px;white-space:nowrap;}.stacked{display:flex;height:23px;border-radius:6px;overflow:hidden;}.stacked span{display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;min-width:0;}.cost-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 12px;margin-top:6px;}.empty{color:var(--muted);padding:25px 10px;text-align:center;font-size:12px;}.caption{color:#7f99bc;font-size:10px;margin-top:10px;}
@@ -104,11 +126,28 @@ def numeric(value):
         return 0.0
 
 
+def writer_configured():
+    try:
+        return bool(st.secrets.get("gcp_service_account", {}).get("client_email"))
+    except Exception:
+        return False
+
+
+def sheets_session():
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import AuthorizedSession
+    config = dict(st.secrets["gcp_service_account"])
+    credentials = service_account.Credentials.from_service_account_info(
+        config, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    spreadsheet_id = st.secrets.get("spreadsheet_id") or re.search(r"/d/([^/]+)", SHEET_URL).group(1)
+    return AuthorizedSession(credentials), f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values"
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_data():
     response = requests.get(SHEET_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
     response.raise_for_status()
-    sheets = pd.read_excel(io.BytesIO(response.content), sheet_name=["dashboard_fact", "strategy", "strategy_steps"])
+    sheets = pd.read_excel(io.BytesIO(response.content), sheet_name=["dashboard_fact", "strategy", "strategy_steps", "cost_parameters"])
     fact = sheets["dashboard_fact"].copy()
     required = {"contact_id", "strategy_name", "channel", "productive_flag", "unproductive_flag", "attempt_cost"}
     missing = required.difference(fact.columns)
@@ -125,7 +164,18 @@ def load_data():
         fact["_date"] = pd.to_datetime(fact[date_column], errors="coerce", dayfirst=False, utc=True).dt.tz_convert("America/Sao_Paulo").dt.tz_localize(None).dt.normalize() if "timestamp" in date_column or "datetime" in date_column else pd.to_datetime(fact[date_column], errors="coerce").dt.normalize()
     else:
         fact["_date"] = pd.NaT
-    return fact, sheets["strategy"], sheets["strategy_steps"]
+    costs = sheets["cost_parameters"]
+    # Leitura autenticada evita o atraso do export XLSX após uma gravação.
+    if writer_configured():
+        session, api_url = sheets_session()
+        with session:
+            response = session.get(api_url+"/"+quote("'cost_parameters'!A1:ZZ", safe=""), timeout=30)
+            response.raise_for_status()
+            rows = response.json().get("values", [])
+            if not rows:
+                raise ValueError("A aba cost_parameters está vazia.")
+            costs = pd.DataFrame([row+[None]*(len(rows[0])-len(row)) for row in rows[1:]], columns=rows[0])
+    return fact, sheets["strategy"], sheets["strategy_steps"], costs
 
 
 def outcome_frames(df):
@@ -196,12 +246,106 @@ hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>|
 st.markdown(hero, unsafe_allow_html=True)
 try:
     with st.spinner("Carregando indicadores…"):
-        df_fact, df_strat, df_steps = load_data()
+        df_fact, df_strat, df_steps, df_costs = load_data()
 except Exception as exc:
     st.error("Não foi possível carregar a planilha. Verifique o compartilhamento, as abas e a conexão.")
     with st.expander("Detalhes do carregamento"):
         st.code(str(exc))
     st.stop()
+
+def save_cost_parameters(strategy_id, values, expected):
+    """Grava somente cinco parâmetros, após comparar com a versão lida."""
+    session, url = sheets_session()
+    with session:
+        result = session.get(url+"/"+quote("'cost_parameters'!A1:ZZ", safe=""), timeout=30)
+        result.raise_for_status()
+        rows = result.json().get("values", [])
+        if not rows or "strategy_id" not in rows[0]:
+            raise ValueError("A aba cost_parameters precisa de um cabeçalho strategy_id.")
+        headers = rows[0]
+        id_index = headers.index("strategy_id")
+        matches = [(i, row) for i,row in enumerate(rows[1:], start=2)
+                   if len(row)>id_index and str(row[id_index])==str(strategy_id)]
+        if len(matches) != 1:
+            raise ValueError("A estratégia deve ter exatamente uma linha em cost_parameters.")
+        row_number, row = matches[0]
+        data = []
+        for field in COST_LABELS:
+            if field not in headers:
+                raise ValueError(f"Parâmetro ausente na planilha: {field}")
+            idx = headers.index(field)
+            if idx >= len(row) or not math.isclose(numeric(row[idx]), expected[field], abs_tol=1e-9):
+                raise ValueError("Os custos foram alterados na planilha. Feche o painel, atualize a página e tente novamente.")
+            number, letters = idx + 1, ""
+            while number:
+                number, remainder = divmod(number-1,26)
+                letters = chr(65+remainder)+letters
+            data.append({"range":f"'cost_parameters'!{letters}{row_number}",
+                         "values":[[values[field]]]})
+        result = session.post(url+":batchUpdate",json={"valueInputOption":"RAW", "data":data},timeout=30)
+        result.raise_for_status()
+        if result.json().get("totalUpdatedCells") != len(COST_LABELS):
+            raise ValueError("A planilha não confirmou a atualização completa. Verifique os parâmetros.")
+
+
+if "costs_open" not in st.session_state:
+    st.session_state.costs_open = False
+_, cost_button_column = st.columns([8,1])
+with cost_button_column:
+    if st.button("⚙ Custos", help="Editar custos da estratégia", use_container_width=True):
+        st.session_state.costs_open = not st.session_state.costs_open
+sidebar_display = "block" if st.session_state.costs_open else "none"
+st.markdown(f"""<style>
+[data-testid="stSidebar"] {{display:{sidebar_display}!important;position:fixed!important;right:0!important;left:auto!important;top:0!important;bottom:0!important;width:min(370px,100vw)!important;min-width:0!important;max-width:100vw!important;transform:none!important;z-index:999;background:#03182f;border-left:1px solid #2264a7;box-shadow:-15px 0 45px #0008;}}
+[data-testid="stSidebarContent"] {{width:100%!important;}}
+[data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapsedControl"] {{display:none!important;}}
+[data-testid="stSidebar"] h2 {{font-size:22px;}}
+[data-testid="stSidebar"] input {{color:#e9efff;background:#041f3c;}}
+</style>""", unsafe_allow_html=True)
+if st.session_state.costs_open:
+    with st.sidebar:
+        if st.button("Fechar ×", use_container_width=True):
+            st.session_state.costs_open = False
+            st.rerun()
+        st.subheader("Custos da estratégia")
+        st.caption("Edite os valores em reais e salve na planilha.")
+        cost_names = df_strat["strategy_name"].dropna().tolist()
+        edit_strategy = st.selectbox("Aplicar à estratégia",cost_names,key="cost_edit_strategy")
+        edit_id = df_strat.loc[df_strat["strategy_name"].eq(edit_strategy),"strategy_id"].iloc[0]
+        cost_rows = df_costs[df_costs["strategy_id"].eq(edit_id)]
+        if len(cost_rows) != 1 or any(field not in df_costs for field in COST_LABELS):
+            st.error("Cadastre os cinco parâmetros e uma única linha desta estratégia em cost_parameters.")
+        else:
+            source = cost_rows.iloc[0]
+            expected = {field:numeric(source[field]) for field in COST_LABELS}
+            with st.form("cost_parameters_form"):
+                values = {field:st.number_input(label,min_value=0.0,value=expected[field],step=0.01,format="%.4f",key=f"cost_{edit_id}_{field}_{expected[field]}") for field,label in COST_LABELS.items()}
+                submit = st.form_submit_button("Atualizar custos",use_container_width=True)
+            st.caption("A atualização vale para esta estratégia. Os custos históricos das tentativas são preservados.")
+            if not writer_configured():
+                st.info("A gravação na planilha ainda precisa ser conectada.")
+                with st.expander("Como habilitar a gravação"):
+                    st.markdown("Adicione `google-auth` ao requirements.txt. Habilite a Google Sheets API, compartilhe a planilha como Editor com uma conta de serviço e adicione a chave dessa conta em Settings → Secrets, na seção `[gcp_service_account]`. Não publique a chave no GitHub.")
+            if submit:
+                if not writer_configured():
+                    st.error("Configure o acesso ao Google Sheets antes de atualizar custos.")
+                else:
+                    try:
+                        save_cost_parameters(edit_id,values,expected)
+                    except ImportError:
+                        st.error("Adicione google-auth ao requirements.txt e reinicie o app.")
+                    except ValueError as exc:
+                        st.error(str(exc))
+                        load_data.clear()
+                    except Exception:
+                        st.error("Não foi possível confirmar a gravação. Confira a planilha antes de tentar novamente e verifique acesso, credenciais e conexão.")
+                    else:
+                        load_data.clear()
+                        st.session_state.costs_saved = edit_strategy
+                        st.rerun()
+if "costs_saved" in st.session_state:
+    st.success(f"Custos de {st.session_state.pop('costs_saved')} atualizados na planilha.")
+
 
 if df_fact.empty:
     st.info("A aba dashboard_fact ainda não contém tentativas.")
@@ -282,23 +426,16 @@ for pos, (_, row) in enumerate(steps.iterrows()):
     channel = str(row.get("channel", ""))
     color = "#00cdb2" if "whatsapp" in channel.lower() else "#168bff"
     kind = "chat" if "text" in channel.lower() else "bars" if "branded" in channel.lower() else "phone"
-    delay = next((row[c] for c in ["delay_minutes", "wait_minutes", "retry_delay_minutes", "delay_min"] if c in row and pd.notna(row[c])), None)
-    timing = f"+{br(float(delay))} min" if delay is not None else f"Etapa {pos+1}"
-    flow.append(f'<div class="step"><div class="step-card">{icon(kind,color)}<span>{esc(channel_name(channel))}</span></div><div class="step-time">{timing}</div></div>')
+    flow.append(f'<div class="step"><div class="step-card">{icon(kind,color)}<span>{esc(channel_name(channel))}</span></div></div>')
 flow_html = '<div class="flow">'+ '<span class="arrow">→</span>'.join(flow) + '</div>' if flow else '<div class="empty">Sequência não cadastrada.</div>'
-# Tarifas só aparecem quando fornecidas na aba strategy, nunca como valores fictícios.
-cost_fields = [("Custo Branded Call",["branded_call_cost", "cost_branded_call"]),("Custo template WhatsApp",["whatsapp_template_cost", "template_cost", "cost_whatsapp_template"]),("Custo minuto Meta",["meta_minute_cost", "cost_meta_minute"]),("Custo minuto produtivo",["productive_minute_cost", "cost_productive_minute"]),("Custo minuto improdutivo",["unproductive_minute_cost", "cost_unproductive_minute"])]
+# Os valores configurados vêm exclusivamente da aba cost_parameters.
+cost_record = df_costs[df_costs["strategy_id"].eq(record.get("strategy_id"))]
+cost_record = cost_record.iloc[0] if not cost_record.empty else pd.Series(dtype=object)
 settings = []
-for label, candidates in cost_fields:
-    tariff = next((record[c] for c in candidates if c in record and pd.notna(record[c])), None)
-    if tariff is None:
-        for field in candidates:
-            if field in detail and not detail[field].dropna().empty:
-                rates = detail[field].dropna().map(numeric).unique()
-                if len(rates) == 1:
-                    tariff = rates[0]
-                break
-    settings.append(f'<div><small>{label}</small><b>{money(numeric(tariff)) if tariff is not None else "—"}</b></div>')
+short_labels = ["Chamada identificada", "Mensagem de consentimento", "Minuto WhatsApp (Meta)", "Minuto produtivo", "Minuto improdutivo"]
+for (field, _), label in zip(COST_LABELS.items(), short_labels):
+    tariff = cost_record.get(field)
+    settings.append(f'<div><small>{label}</small><b>{money(numeric(tariff)) if tariff is not None and pd.notna(tariff) else "—"}</b></div>')
 ani = next((record[c] for c in ["ani", "caller_id", "bina"] if c in record and pd.notna(record[c])), "Não informado")
 config_body = f'<div class="panel-body"><div class="config-head"><h3>{esc(detail_name)}</h3><div class="meta"><div><small>ANI</small>{esc(ani)}</div><div><small>Objetivo central</small>{esc(record.get("objective","—"))}</div></div></div><div class="sequence-label">Sequência de abordagem</div>{flow_html}<div class="sequence-label">Custos configurados da estratégia</div><div class="cost-settings">{"".join(settings)}</div></div>'
 config_panel = panel("Configuração da Estratégia Selecionada", config_body, '<span class="badge">● Estratégia selecionada</span>')
