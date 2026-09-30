@@ -31,6 +31,7 @@ import uuid
 from urllib.parse import quote
 
 import pandas as pd
+import altair as alt
 import requests
 import streamlit as st
 
@@ -307,6 +308,127 @@ def duration_table(df):
             duration = f"{sec//60} min {sec%60:02d} seg" if sec >= 60 else f"{sec} seg"
             rows.append(f'<tr><td>{esc(channel_name(channel))}</td><td>{duration}</td></tr>')
     return '<div class="mini-title">Duração média por canal</div><table class="duration-table"><thead><tr><th>Canal</th><th>Duração média</th></tr></thead><tbody>' + "".join(rows) + '</tbody></table>'
+
+
+KPI_LABELS = ["Números únicos", "Contatos produtivos", "Contatos improdutivos", "Sem contato", "Custo total", "Custo por contato efetivo"]
+
+
+def open_indicator(index):
+    st.session_state.indicator_detail = index
+
+
+def indicator_series(df, index, granularity, start=None, end=None):
+    """Resultados únicos atribuídos à primeira ocorrência no intervalo macro.
+    Tentativas: todas as tentativas das pessoas pertencentes ao resultado final.
+    """
+    dated = df[df["_date"].notna()].copy()
+    frequency = {"Dias":"D", "Semanas":"W-SUN", "Meses":"M"}[granularity]
+    def bucket(values):
+        return values.dt.to_period(frequency).dt.start_time
+    if dated.empty:
+        return pd.DataFrame(),df.iloc[0:0].copy()
+    start = pd.Timestamp(start) if start is not None else dated["_date"].min()
+    end = pd.Timestamp(end) if end is not None else dated["_date"].max()
+    first = start.to_period(frequency).start_time
+    last = end.to_period(frequency).start_time
+    periods = pd.period_range(first,last,freq=frequency).to_timestamp()
+    base = pd.DataFrame(index=periods)
+    base.index.name = "Período"
+    prod, improd, no_contact = outcome_frames(df)
+    events = [df.drop_duplicates("contact_id"),prod,improd,no_contact]
+    if index <= 3:
+        if index == 0:
+            events[0] = df.sort_values("_date",kind="stable").drop_duplicates("contact_id")
+        event = events[index]
+        event = event[event["_date"].notna()]
+        counts = event.groupby(bucket(event["_date"]))["contact_id"].nunique()
+        base[KPI_LABELS[index]] = counts.reindex(periods,fill_value=0)
+    else:
+        costs = dated.groupby(bucket(dated["_date"]))["custo_num"].sum().reindex(periods,fill_value=0)
+        if index == 4:
+            base[KPI_LABELS[index]] = costs.cumsum()
+        else:
+            dated_prod = prod[prod["_date"].notna()]
+            counts = dated_prod.groupby(bucket(dated_prod["_date"]))["contact_id"].nunique().reindex(periods,fill_value=0)
+            base[KPI_LABELS[index]] = costs.div(counts.where(counts>0))
+    attempts = df[df["contact_id"].isin(events[index]["contact_id"])].copy() if index in [1,2,3] else df.copy()
+    if index in [1,2,3]:
+        valid_attempts = attempts[attempts["_date"].notna()]
+        for channel, label in VOICE_ACTIONS.items():
+            channel_rows = valid_attempts[valid_attempts["channel"].eq(channel)]
+            counts = channel_rows.groupby(bucket(channel_rows["_date"])).size()
+            base["Tentativas — "+label] = counts.reindex(periods,fill_value=0)
+    return base.reset_index(), attempts
+
+
+def analytic_attempts(df):
+    names = {
+        "attempt_timestamp":"Data e hora", "date":"Data", "attempt_id":"Tentativa", "contact_id":"Contato",
+        "strategy_name":"Estratégia", "channel":"Canal", "retry_count":"Repetições", "duration_sec":"Duração (seg)",
+        "duration_seconds":"Duração (seg)", "duration_band":"Faixa de duração", "contact_result":"Resultado",
+        "productive_flag":"Produtiva", "unproductive_flag":"Improdutiva", "answered_flag":"Atendida",
+        "template_sent_flag":"Opt-in enviado", "template_replied_flag":"Resposta ao opt-in", "custo_num":"Custo (R$)"}
+    selected = [c for c in names if c in df]
+    result = df.sort_values("attempt_timestamp",kind="stable") if "attempt_timestamp" in df else df.sort_values("_date",kind="stable")
+    result = result[selected].copy()
+    if "channel" in result:
+        result["channel"] = result["channel"].map(channel_name)
+    for flag in ["productive_flag","unproductive_flag","answered_flag","template_sent_flag","template_replied_flag"]:
+        if flag in result:
+            result[flag] = result[flag].map({0:"Não",1:"Sim"}).fillna("—")
+    return result.rename(columns=names)
+
+
+def render_indicator_detail(df, selected_strategy, start, end):
+    index = st.session_state.get("indicator_detail")
+    if index is None:
+        return
+    with st.container(border=True,key="indicator_detail_panel"):
+        heading, close = st.columns([5,1])
+        with heading:
+            st.subheader(KPI_LABELS[index]+" — visão detalhada")
+            st.caption("Estratégia: "+selected_strategy+" · Mesmo período dos filtros do dashboard")
+        with close:
+            if st.button("Fechar detalhe",key="close_indicator_detail",use_container_width=True):
+                st.session_state.pop("indicator_detail",None)
+                st.rerun()
+        granularity = st.radio("Visualização",["Dias","Semanas","Meses"],horizontal=True,key="indicator_granularity")
+        series, attempts = indicator_series(df,index,granularity,start,end)
+        if series.empty:
+            st.info("Não há tentativas com data válida neste intervalo.")
+            return
+        has_table = index in [1,2,3]
+        if has_table:
+            chart_col, table_col = st.columns([1.25,1],gap="medium")
+        else:
+            chart_col = st.container()
+        with chart_col:
+            long = series.melt(id_vars="Período",var_name="Série",value_name="Valor")
+            # Mantém lacunas quando não há denominador para custo por contato.
+            colors = ["#00dcc0","#168bff","#983bff","#8aa8ff"] if has_table else ["#168bff"]
+            currency = index >= 4
+            chart = alt.Chart(long).mark_line(point=True,strokeWidth=2.5).encode(
+                x=alt.X("Período:T",title="Período",axis=alt.Axis(format="%d/%m/%Y",labelAngle=-30)),
+                y=alt.Y("Valor:Q",title="Custo (R$)" if currency else "Quantidade",scale=alt.Scale(zero=True)),
+                color=alt.Color("Série:N",scale=alt.Scale(domain=list(series.columns[1:]),range=colors),legend=alt.Legend(title=None,orient="bottom",labelLimit=300)),
+                tooltip=[alt.Tooltip("Período:T",format="%d/%m/%Y"),alt.Tooltip("Série:N"),alt.Tooltip("Valor:Q",format=".2f" if currency else ".0f")],
+            ).properties(height=360).interactive()
+            st.altair_chart(chart,use_container_width=True,theme="streamlit")
+        if has_table:
+            with table_col:
+                st.markdown("**Detalhes analíticos das tentativas**")
+                st.caption(f"{br(len(attempts))} tentativas · {br(attempts['contact_id'].nunique())} números únicos")
+                st.dataframe(analytic_attempts(attempts),hide_index=True,use_container_width=True,height=360)
+            st.caption("O indicador conta cada pessoa uma vez no intervalo, na primeira ocorrência do resultado. As linhas de canal contam todas as tentativas dessas pessoas, incluindo retries. WhatsApp texto aparece na tabela como fluxo associado, sem uma linha de ação de voz.")
+        elif index == 0:
+            st.caption("Cada número é atribuído à primeira tentativa no período filtrado. A soma dos pontos corresponde ao KPI Números únicos.")
+        elif index == 4:
+            st.caption("Soma acumulada dos custos das tentativas dentro do período filtrado. O último ponto corresponde ao Custo total.")
+        else:
+            st.caption("Custo das tentativas de cada intervalo dividido pelos contatos que tiveram o primeiro resultado produtivo nesse intervalo. Intervalos sem contatos produtivos ficam sem valor.")
+        st.caption("Semanas começam na segunda-feira. Semanas e meses parciais incluem somente os dias dentro do filtro do dashboard.")
+        if df["_date"].isna().any():
+            st.warning("Há tentativas sem data válida. Elas não entram no gráfico temporal.")
 
 
 hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>| Conecta+</span><small>Inteligência que conecta<br>os seus resultados.</small></div><div><h1>Conecta+ <span>Strategy Cockpit</span></h1><p>Efetividade, custo e performance por estratégia</p></div><div class="use-cases">' + "".join(f'<div class="use-case">{icon(kind,"#4759ff")}<div><b>{name}</b><small>{desc}</small></div></div>' for kind, name, desc in [("chat", "Marketing", "Mais oportunidades"), ("bars", "Vendas", "Mais conversões"), ("bag", "Cobrança", "Mais resultados")]) + '</div></div></div>'
@@ -677,7 +799,7 @@ if not filtered["_date"].dropna().empty:
     for day in pd.date_range(filtered["_date"].min(), filtered["_date"].max()):
         daily.append(metrics(filtered[filtered["_date"].eq(day)]))
 kpi_html = []
-labels = ["Números únicos", "Contatos produtivos", "Contatos improdutivos", "Sem contato", "Custo total", "Custo por contato efetivo"]
+labels = KPI_LABELS
 for i, (label, kind, color) in enumerate(zip(labels, ["users", "phone", "off", "off", "coin", "bars"], ["#168bff", "#00cfb2", "#ee3585", "#6389c5", "#853aff", "#168bff"])):
     value = money(current[i]) if i >= 4 else br(current[i])
     desc = f"{br(current[i]/current[0]*100 if current[0] else 0,1)}% da base" if i in [1,2,3] else "no período selecionado"
@@ -690,6 +812,30 @@ for i, (label, kind, color) in enumerate(zip(labels, ["users", "phone", "off", "
         desc = "vs. período anterior"
     trend = spark([row[i] for row in daily], color, f"spark-{i}")
     kpi_html.append(f'<article class="kpi"><div class="kpi-head">{icon(kind,color)}<div><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div></div></div><div class="kpi-foot"><div><div class="delta" style="color:{delta_color}">{delta or "&nbsp;"}</div><div class="sub">{desc}</div></div>{trend}</div></article>')
+
+# O botão transparente cobre o card inteiro e preserva acesso por teclado.
+st.markdown("""<style>
+.st-key-kpi_grid [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;}
+.st-key-kpi_grid [data-testid="stColumn"] {width:100%!important;min-width:0!important;}
+.st-key-kpi_grid [class*="st-key-kpi_click_"] {position:relative;}
+.st-key-kpi_grid [class*="st-key-kpi_click_"] [data-testid="stVerticalBlock"] {gap:0;}
+.st-key-kpi_grid [data-testid="stButton"] {position:absolute;inset:0;z-index:2;}
+.st-key-kpi_grid [data-testid="stButton"] button {width:100%;height:100%;background:transparent!important;color:transparent!important;border:1px solid transparent;border-radius:11px;cursor:pointer;}
+.st-key-kpi_grid [data-testid="stButton"] button p {color:transparent!important;}
+.st-key-kpi_grid [data-testid="stButton"] button:hover {border-color:#268eff;background:#168bff0a!important;}
+.st-key-kpi_grid [data-testid="stButton"] button:focus-visible {outline:2px solid #00dcc0;outline-offset:2px;}
+.st-key-indicator_detail_panel {background:#03182f;border-color:#164579!important;}
+@media(max-width:1250px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media(max-width:560px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}}
+</style>""",unsafe_allow_html=True)
+with st.container(key="kpi_grid"):
+    card_columns = st.columns(6)
+    for index,column in enumerate(card_columns):
+        with column:
+            with st.container(key=f"kpi_click_{index}"):
+                st.markdown('<div class="cockpit">'+kpi_html[index]+'</div>',unsafe_allow_html=True)
+                st.button(KPI_LABELS[index],key=f"open_indicator_{index}",help="Abrir evolução do indicador",on_click=open_indicator,args=(index,),use_container_width=True)
+render_indicator_detail(filtered,selected,date_start,date_end)
 
 summary = [(name, metrics(period_df[period_df["strategy_name"].eq(name)])) for name in names]
 max_unique = max([m[0] for _, m in summary] + [1])
@@ -751,6 +897,6 @@ for i,(channel,value) in enumerate(cost_series.items()):
 mini_cards = "".join(f'<div class="mini-kpi"><small>{label}</small><b>{money(value)}</b></div>' for label,value in [("Custo por contato efetivo",m[5]),("Custo por contato improdutivo",m[4]/m[2] if m[2] else None),("Custo total da estratégia",m[4])])
 cost_body = '<div class="cost-body"><div class="cost-cards">'+mini_cards+'</div><div><div class="mini-title">Composição do custo por canal</div><div class="stacked">'+"".join(segments)+'</div><div class="cost-legend">'+"".join(cost_legend)+'</div></div></div>'
 cost_panel = panel("Custos da Estratégia no Período",cost_body,f'<span class="tag">{esc(detail_name)}</span>',"cost-panel")
-output = '<div class="cockpit"><div class="kpis">'+"".join(kpi_html)+'</div><div class="dashboard">'+strategy_panel+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
+output = '<div class="cockpit"><div class="dashboard">'+strategy_panel+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
 # Uma única árvore HTML mantém o grid coeso e evita tags abertas entre blocos Streamlit.
 st.markdown(output, unsafe_allow_html=True)
