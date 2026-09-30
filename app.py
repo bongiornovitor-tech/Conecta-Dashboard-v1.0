@@ -133,10 +133,47 @@ def writer_configured():
         return False
 
 
+def authentication_error(exc):
+    # Nunca mostra o texto bruto da exceção: pode conter dados da credencial.
+    if isinstance(exc, ImportError):
+        return "Dependência ausente: adicione google-auth ao requirements.txt e reinicie o app."
+    if isinstance(exc, CostConfigurationError):
+        return str(exc)
+    if isinstance(exc, requests.HTTPError):
+        status = exc.response.status_code if exc.response is not None else ""
+        return f"Google Sheets retornou HTTP {status}. Confira a API ativada, o ID da planilha e a permissão de Editor da conta de serviço."
+    name = type(exc).__name__
+    if name == "RefreshError":
+        return "O Google recusou a credencial. Confira se client_email e private_key pertencem ao mesmo arquivo JSON e se a chave continua ativa."
+    if isinstance(exc, ValueError):
+        return "A private_key não pôde ser lida. Copie a chave completa do JSON, incluindo BEGIN PRIVATE KEY e END PRIVATE KEY."
+    if isinstance(exc, requests.RequestException) or name in ["TransportError", "TimeoutError"]:
+        return "Não foi possível conectar ao Google. Tente novamente e confira a conexão do app."
+    return f"Falha na conexão dos custos ({name}). Verifique a configuração da conta de serviço."
+
+
+class CostConfigurationError(ValueError):
+    pass
+
+
+def normalize_credentials(config):
+    config = dict(config)
+    config.setdefault("type", "service_account")
+    config.setdefault("token_uri", "https://oauth2.googleapis.com/token")
+    missing = [field for field in ["client_email", "private_key", "token_uri"] if not str(config.get(field, "")).strip()]
+    if missing:
+        raise CostConfigurationError("Campos ausentes em [gcp_service_account]: " + ", ".join(missing))
+    key = str(config["private_key"]).strip().replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
+    if not key.startswith("-----BEGIN PRIVATE KEY-----") or not key.endswith("-----END PRIVATE KEY-----"):
+        raise CostConfigurationError("private_key incompleta: preserve BEGIN PRIVATE KEY, END PRIVATE KEY e todo o conteúdo entre eles.")
+    config["private_key"] = key + "\n"
+    return config
+
+
 def sheets_session():
     from google.oauth2 import service_account
     from google.auth.transport.requests import AuthorizedSession
-    config = dict(st.secrets["gcp_service_account"])
+    config = normalize_credentials(st.secrets["gcp_service_account"])
     credentials = service_account.Credentials.from_service_account_info(
         config, scopes=["https://www.googleapis.com/auth/spreadsheets"])
     spreadsheet_id = st.secrets.get("spreadsheet_id") or re.search(r"/d/([^/]+)", SHEET_URL).group(1)
@@ -193,13 +230,8 @@ def load_data():
                 if not rows:
                     raise ValueError("A aba cost_parameters está vazia.")
                 costs = pd.DataFrame([row[:len(rows[0])]+[None]*max(0,len(rows[0])-len(row)) for row in rows[1:]], columns=rows[0])
-        except ImportError:
-            cost_error = "Falta a dependência google-auth. Adicione-a ao requirements.txt e reinicie o app."
-        except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else ""
-            cost_error = f"Google Sheets retornou HTTP {status}. Confira a API ativada, o ID da planilha e a permissão de Editor da conta de serviço."
-        except Exception:
-            cost_error = "Não foi possível autenticar a edição de custos. Confira os campos dos Secrets e as quebras de linha da private_key."
+        except Exception as exc:
+            cost_error = authentication_error(exc)
     return fact, sheets["strategy"], sheets["strategy_steps"], costs, cost_error
 
 
@@ -361,11 +393,14 @@ if st.session_state.costs_open:
                         save_cost_parameters(edit_id,values,expected)
                     except ImportError:
                         st.error("Adicione google-auth ao requirements.txt e reinicie o app.")
+                    except CostConfigurationError as exc:
+                        st.error(authentication_error(exc))
                     except ValueError as exc:
-                        st.error(str(exc))
+                        safe_prefixes = ("A aba cost_parameters", "A estratégia deve", "Parâmetro ausente", "Os custos foram", "A planilha não confirmou")
+                        st.error(str(exc) if str(exc).startswith(safe_prefixes) else authentication_error(exc))
                         load_data.clear()
-                    except Exception:
-                        st.error("Não foi possível confirmar a gravação. Confira a planilha antes de tentar novamente e verifique acesso, credenciais e conexão.")
+                    except Exception as exc:
+                        st.error(authentication_error(exc))
                     else:
                         load_data.clear()
                         st.session_state.costs_saved = edit_strategy
