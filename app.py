@@ -609,9 +609,89 @@ def groq_config():
     return key, model
 
 
-def groq_request(messages, structured=True):
+class AIRequestTooLarge(AIAnalysisError):
+    pass
+
+
+def rate_reset_seconds(value):
+    value = str(value or "")
+    if re.fullmatch(r"[0-9.]+", value): return float(value)
+    parts = re.findall(r"([0-9.]+)(ms|s|m|h)", value)
+    return sum(float(n)*{"ms":0.001,"s":1,"m":60,"h":3600}[unit] for n,unit in parts) if parts else None
+
+
+def groq_budget_id(key, model):
+    return hashlib.sha256((key + ":" + model).encode()).hexdigest()
+
+
+def estimate_groq_input(payload, budget_id):
+    # Estimativa conservadora, calibrada pelo consumo real; não usa tokenizer de outro modelo.
+    raw = json.dumps({"messages":payload["messages"],"response_format":payload.get("response_format")},ensure_ascii=False,separators=(",",":"))
+    factor = st.session_state.get("groq_token_factors",{}).get(budget_id,0.5)
+    return int(len(raw.encode("utf-8"))*max(0.5,factor)*1.15)+128
+
+
+def record_groq_usage(response, budget_id, payload, estimate):
+    now = time.time()
+    headers = getattr(response,"headers",{})
+    limits = st.session_state.setdefault("groq_rate_limits",{})
+    snapshot = {"at":now}
+    for field,header in [("limit","x-ratelimit-limit-tokens"),("remaining","x-ratelimit-remaining-tokens")]:
+        try: snapshot[field] = int(headers[header])
+        except (KeyError,ValueError,TypeError): pass
+    reset = rate_reset_seconds(headers.get("x-ratelimit-reset-tokens"))
+    if reset is not None: snapshot["reset_at"] = now+reset
+    retry = rate_reset_seconds(headers.get("retry-after"))
+    if response.status_code == 429 and retry is not None: snapshot["blocked_until"] = now+retry
+    limits[budget_id] = snapshot
+    try: usage = response.json().get("usage",{})
+    except (ValueError,TypeError): usage = {}
+    if not isinstance(usage,dict): usage = {}
+    measured = {k:usage[k] for k in ["prompt_tokens","completion_tokens","total_tokens"] if isinstance(usage.get(k),int)}
+    reasoning = usage.get("completion_tokens_details",{})
+    if isinstance(reasoning,dict) and isinstance(reasoning.get("reasoning_tokens"),int): measured["reasoning_tokens"] = reasoning["reasoning_tokens"]
+    stats = st.session_state.setdefault("groq_usage_stats",{})
+    bucket = stats.setdefault(budget_id,{"calls":0,"total_tokens":0})
+    bucket["calls"] += 1
+    bucket["total_tokens"] += measured.get("total_tokens",0)
+    bucket["last"] = {**measured,"estimated_input":estimate,"output_reserved":payload["max_completion_tokens"],"http":response.status_code}
+    if measured.get("prompt_tokens"):
+        raw = json.dumps({"messages":payload["messages"],"response_format":payload.get("response_format")},ensure_ascii=False,separators=(",",":"))
+        ratio = measured["prompt_tokens"]/max(1,len(raw.encode("utf-8")))
+        factors=st.session_state.setdefault("groq_token_factors",{})
+        factors[budget_id] = max(factors.get(budget_id,0.5),ratio)
+
+
+def check_groq_budget(payload, key, model):
+    budget_id=groq_budget_id(key,model)
+    snapshot=st.session_state.get("groq_rate_limits",{}).get(budget_id,{})
+    config=dict(st.secrets.get("ai",{}))
+    try: configured=int(config.get("max_tokens_per_minute",8000))
+    except (ValueError,TypeError): configured=8000
+    limit=min(max(2000,configured),snapshot.get("limit",max(2000,configured)))
+    estimate=estimate_groq_input(payload,budget_id)
+    required=estimate+payload["max_completion_tokens"]
+    if required>int(limit*0.9):
+        raise AIRequestTooLarge("Não foi possível preparar uma análise completa neste momento. Tente novamente mais tarde.")
+    now=time.time()
+    blocked=snapshot.get("blocked_until",0)
+    reset=snapshot.get("reset_at",snapshot.get("at",0)+60)
+    if blocked>now:
+        wait=blocked-now
+    elif snapshot.get("remaining",limit)<required and reset>now:
+        wait=reset-now
+    else: wait=0
+    if 0<wait<=8:
+        with st.spinner("Preparando a análise…"):
+            time.sleep(wait+0.2)
+    elif wait>8:
+        raise AIAnalysisError("A análise estará disponível novamente em cerca de " + str(max(1,int(wait/60)+1)) + " minuto(s). Seus filtros e sua pergunta foram mantidos.")
+    return budget_id,estimate
+
+
+def groq_request(messages, structured=True, output_limit=1800):
     key, model = groq_config()
-    payload = {"model": model, "messages": messages, "max_completion_tokens": 2400}
+    payload = {"model": model, "messages": messages, "max_completion_tokens": output_limit}
     if structured:
         schema = ai_schema()
         def strict_schema(node):
@@ -626,13 +706,17 @@ def groq_request(messages, structured=True):
                 for value in node: strict_schema(value)
         strict_schema(schema)
         payload["response_format"] = {"type":"json_schema", "json_schema":{"name":"business_analysis", "strict":True, "schema":schema}}
+    budget_id, estimate = check_groq_budget(payload, key, model)
     try:
         response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization":"Bearer " + key,"Content-Type":"application/json"}, json=payload, timeout=(10,45))
     except requests.RequestException:
         raise AIAnalysisError("Não foi possível conectar à Groq. Tente novamente mais tarde.") from None
+    record_groq_usage(response, budget_id, payload, estimate)
+    if response.status_code == 413:
+        raise AIRequestTooLarge("Não foi possível concluir a análise neste momento. Tente novamente mais tarde.")
     if response.status_code != 200:
         st.session_state.ai_diagnostics = gemini_error_details(response, key)
-        messages = {400:"A Groq recusou a configuração. Confira o modelo e os detalhes da conexão.",401:"Chave Groq inválida. Confira [ai].api_key nos Secrets.",403:"A chave não tem acesso ao modelo na Groq.",404:"Modelo não disponível na Groq. Confira [ai].model.",413:"O resumo ficou grande demais. Selecione uma estratégia ou um período menor.",429:"O limite gratuito da Groq foi atingido. Aguarde o período de renovação indicado nos detalhes da conexão. Não haverá troca automática de fornecedor.",500:"A Groq está indisponível. Tente novamente mais tarde.",503:"A Groq está indisponível. Tente novamente mais tarde."}
+        messages = {400:"A Groq recusou a configuração. Confira o modelo e os detalhes da conexão.",401:"Chave Groq inválida. Confira [ai].api_key nos Secrets.",403:"A chave não tem acesso ao modelo na Groq.",404:"Modelo não disponível na Groq. Confira [ai].model.",413:"O resumo ficou grande demais. Selecione uma estratégia ou um período menor.",429:"A análise está temporariamente indisponível. Sua pergunta e seus filtros foram mantidos; tente novamente mais tarde.",500:"A Groq está indisponível. Tente novamente mais tarde.",503:"A Groq está indisponível. Tente novamente mais tarde."}
         retry = response.headers.get("retry-after", "")
         if retry and re.fullmatch(r"[0-9.]+", retry):
             st.session_state.ai_diagnostics += " · Tentar novamente em " + retry + " segundos"
@@ -649,6 +733,48 @@ def groq_request(messages, structured=True):
     return content
 
 
+def compact_ai_context(context, prompt, minimal=False):
+    """Preserva KPIs e filtros; seleciona detalhes por volume, sem somar pessoas entre grupos."""
+    core = ["filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin"]
+    summary = {k:context[k] for k in core if k in context}
+    premises = ["Mantive o período e a estratégia selecionados, com os indicadores completos. Comparações indicam padrões, sem comprovar causa ou ganho futuro."]
+    summary["estrategias"] = [{k:row[k] for k in ["nome","objetivo","acoes"] if k in row} for row in context.get("estrategias",[])][:8]
+    # Retornos técnicos repetidos são agrupados pelo resultado macro. Só tentativas e custos são aditivos.
+    reasons = {}
+    for row in context.get("por_resultado_codigo",[]):
+        name = row.get("contact_result","não informado")
+        entry = reasons.setdefault(name,{"contact_result":name,"tentativas":0,"custo_total":0})
+        entry["tentativas"] += row.get("tentativas",0)
+        entry["custo_total"] += row.get("custo_total",0)
+    details = [("por_canal",context.get("por_canal",[])),("por_estrategia",context.get("por_estrategia",[])),("motivos_das_tentativas",list(reasons.values()))]
+    q = unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    if not minimal:
+        if re.search(r"horario|hora|quando|ddd|perfil",q):
+            details += [(k,v) for k,v in context.items() if k=="por_canal_horario" or k.startswith("recorte_ddd")]
+        if re.search(r"lead|mailing|origem|publico|segment",q):
+            details += [(k,v) for k,v in context.items() if k in ["recorte_lead_source","recorte_segment"]]
+    omitted = False
+    def size():
+        return len((AI_SYSTEM + prompt + json.dumps(business_context(summary),ensure_ascii=False,separators=(",",":"))).encode("utf-8"))
+    # Margem para schema, resposta e diferença entre caracteres e tokens; não é tokenização exata.
+    budget = 7500 if minimal else 10000
+    for name,rows in details:
+        ranked = sorted(rows,key=lambda r:r.get("tentativas",0),reverse=True)
+        summary[name] = []
+        for row in ranked[:(4 if minimal else 12)]:
+            slim = {k:(round(v,2) if isinstance(v,float) else v) for k,v in row.items() if k not in ["hangup_cause","custo_por_contato_efetivo"]}
+            summary[name].append(slim)
+            if size()>budget:
+                summary[name].pop(); omitted=True; break
+        omitted |= len(summary[name]) < len(rows)
+        if not summary[name]: summary.pop(name)
+    premises.append("Agrupei os motivos das tentativas e priorizei os grupos de maior volume. Detalhes não apresentados não sustentam conclusões; pessoas de grupos diferentes não são somadas.")
+    if minimal or omitted:
+        premises.append("A análise usa uma síntese dos detalhes, preservando os totais do dashboard e o recorte escolhido.")
+    summary["premissas_da_sintese"] = premises
+    return summary,premises
+
+
 def run_ai_analysis(context, prompt):
     config = dict(st.secrets.get("ai", {}))
     provider = str(config.get("provider", "gemini")).lower()
@@ -663,11 +789,21 @@ def run_ai_analysis(context, prompt):
     if provider == "gemini":
         result = run_gemini_analysis(context, prompt)
     else:
-        content = groq_request([{"role":"system","content":AI_SYSTEM + "\nSeja breve. No máximo 3 recomendações e 3 etapas de validação."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(context)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}])
+        summary, premises = compact_ai_context(context, prompt)
+        def messages_for(value):
+            return [{"role":"system","content":AI_SYSTEM + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
+        try:
+            content = groq_request(messages_for(summary))
+        except AIRequestTooLarge:
+            # Recuperação única: mantém o intervalo e os indicadores, reduz detalhes.
+            summary, premises = compact_ai_context(context, prompt, minimal=True)
+            content = groq_request(messages_for(summary), output_limit=1200)
         try:
             result = finish_ai_result(validate_ai_result(json.loads(content)))
         except (ValueError,TypeError):
             raise AIAnalysisError("A resposta não veio no formato esperado. Tente novamente.") from None
+    if provider == "groq":
+        result["premissas_da_sintese"] = premises
     cache[cache_key] = {"time":time.time(),"result":result}
     while len(cache) > 20: cache.pop(next(iter(cache)))
     return result
@@ -731,6 +867,22 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
                     st.error("Não foi possível concluir o teste. Confira os Secrets.")
                 else:
                     st.success("A API respondeu ao teste simples com "+model+".")
+            config = dict(st.secrets.get("ai",{}))
+            if str(config.get("provider","gemini")).lower() == "groq":
+                try:
+                    key, model = groq_config()
+                    stats = st.session_state.get("groq_usage_stats",{}).get(groq_budget_id(key,model),{})
+                    if stats:
+                        last=stats.get("last",{})
+                        st.caption("Consumo técnico · apenas esta sessão; inclui testes e chamadas sem análise concluída.")
+                        st.write("Chamadas: " + str(stats["calls"]) + " · Tokens medidos: " + str(stats["total_tokens"]))
+                        if "prompt_tokens" in last:
+                            st.write("Última chamada — entrada: " + str(last["prompt_tokens"]) + " · saída: " + str(last.get("completion_tokens",0)) + " · total: " + str(last.get("total_tokens",0)))
+                            if "reasoning_tokens" in last: st.caption("Raciocínio incluído na saída: " + str(last["reasoning_tokens"]))
+                        else: st.caption("A última chamada não informou consumo medido.")
+                        st.caption("Entrada estimada antes do envio: " + str(last.get("estimated_input",0)) + " · reserva para resposta: " + str(last.get("output_reserved",0)))
+                except AIAnalysisError:
+                    pass
             if st.session_state.get("ai_diagnostics"):
                 st.code(st.session_state.ai_diagnostics,language=None)
         saved=st.session_state.get("ai_result")
@@ -740,6 +892,10 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
             st.warning("Os dados ou filtros mudaram. Execute uma nova análise para este recorte.")
             return
         data=saved["data"]
+        if data.get("premissas_da_sintese"):
+            with st.expander("Premissas da análise"):
+                for premise in data["premissas_da_sintese"]:
+                    st.write(premise)
         with st.container(border=True):
             st.markdown("### Leitura executiva")
             st.write(data["resumo"][:2000])
