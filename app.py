@@ -817,13 +817,20 @@ for i, (label, kind, color) in enumerate(zip(labels, ["users", "phone", "off", "
 st.markdown("""<style>
 .st-key-kpi_grid [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;}
 .st-key-kpi_grid [data-testid="stColumn"] {width:100%!important;min-width:0!important;}
-.st-key-kpi_grid [class*="st-key-kpi_click_"] {position:relative;}
+.st-key-kpi_grid [class*="st-key-kpi_click_"] {position:relative!important;isolation:isolate;}
 .st-key-kpi_grid [class*="st-key-kpi_click_"] [data-testid="stVerticalBlock"] {gap:0;}
-.st-key-kpi_grid [data-testid="stButton"] {position:absolute;inset:0;z-index:2;}
-.st-key-kpi_grid [data-testid="stButton"] button {width:100%;height:100%;background:transparent!important;color:transparent!important;border:1px solid transparent;border-radius:11px;cursor:pointer;}
-.st-key-kpi_grid [data-testid="stButton"] button p {color:transparent!important;}
-.st-key-kpi_grid [data-testid="stButton"] button:hover {border-color:#268eff;background:#168bff0a!important;}
-.st-key-kpi_grid [data-testid="stButton"] button:focus-visible {outline:2px solid #00dcc0;outline-offset:2px;}
+.st-key-kpi_grid [class*="st-key-kpi_click_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]),
+.st-key-kpi_grid [class*="st-key-kpi_click_"] .element-container:has([data-testid="stButton"]) {position:absolute!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;z-index:3;}
+.st-key-kpi_grid [data-testid="stButton"] {position:static!important;width:100%!important;height:100%!important;}
+.st-key-kpi_grid [data-testid="stButton"] > div {width:100%!important;height:100%!important;}
+.st-key-kpi_grid [data-testid="stButton"] button {display:block!important;width:100%!important;height:100%!important;min-height:0!important;padding:0!important;background:transparent!important;color:transparent!important;border:0!important;border-radius:11px;box-shadow:none!important;cursor:pointer;outline:none!important;}
+.st-key-kpi_grid [data-testid="stButton"] button * {color:transparent!important;}
+.st-key-kpi_grid [data-testid="stButton"] button:hover,
+.st-key-kpi_grid [data-testid="stButton"] button:active,
+.st-key-kpi_grid [data-testid="stButton"] button:focus {background:transparent!important;border:0!important;box-shadow:none!important;outline:none!important;}
+.st-key-kpi_grid .kpi {transition:border-color .15s ease,box-shadow .15s ease;}
+.st-key-kpi_grid [class*="st-key-kpi_click_"]:hover .kpi {border-color:#268eff;box-shadow:0 0 14px #168bff25;}
+.st-key-kpi_grid [class*="st-key-kpi_click_"]:has(button:focus-visible) .kpi {outline:2px solid #00dcc0;outline-offset:2px;}
 .st-key-indicator_detail_panel {background:#03182f;border-color:#164579!important;}
 @media(max-width:1250px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(3,minmax(0,1fr));}}
 @media(max-width:560px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}}
@@ -834,7 +841,7 @@ with st.container(key="kpi_grid"):
         with column:
             with st.container(key=f"kpi_click_{index}"):
                 st.markdown('<div class="cockpit">'+kpi_html[index]+'</div>',unsafe_allow_html=True)
-                st.button(KPI_LABELS[index],key=f"open_indicator_{index}",help="Abrir evolução do indicador",on_click=open_indicator,args=(index,),use_container_width=True)
+                st.button(KPI_LABELS[index],key=f"open_indicator_{index}",on_click=open_indicator,args=(index,),use_container_width=True)
 render_indicator_detail(filtered,selected,date_start,date_end)
 
 summary = [(name, metrics(period_df[period_df["strategy_name"].eq(name)])) for name in names]
