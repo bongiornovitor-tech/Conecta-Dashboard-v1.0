@@ -444,6 +444,41 @@ def validate_ai_result(value):
     return value
 
 
+def gemini_error_details(response,key):
+    try:
+        error=response.json().get("error",{})
+        message=str(error.get("message",""))
+        status=str(error.get("status",""))
+    except Exception:
+        message="Resposta sem descrição JSON."
+        status=""
+    message=message.replace(key,"[chave ocultada]") if key else message
+    message=re.sub(r"AIza[A-Za-z0-9_-]+","[chave ocultada]",message)
+    message=re.sub(r"https?://\S+","[URL omitida]",message)
+    return f"HTTP {response.status_code} · {status} · {message[:700]}"
+
+
+def test_gemini_connection():
+    config=dict(st.secrets.get("ai",{}))
+    key=str(config.get("api_key","")).strip()
+    model=str(config.get("model","gemini-3.8-flash")).removeprefix("models/")
+    if not key or not re.fullmatch(r"[A-Za-z0-9._-]+",model):
+        raise AIAnalysisError("Confira api_key e model na seção [ai].")
+    try:
+        response=requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",headers={"x-goog-api-key":key,"Content-Type":"application/json"},json={"contents":[{"parts":[{"text":"Responda somente: conexão funcionando."}]}]},timeout=(10,45))
+    except requests.RequestException:
+        raise AIAnalysisError("Não foi possível conectar ao endereço da API Gemini.") from None
+    if response.status_code!=200:
+        details=gemini_error_details(response,key)
+        st.session_state.ai_diagnostics=details
+        raise AIAnalysisError(details)
+    candidates=response.json().get("candidates",[])
+    if not candidates or not candidates[0].get("content",{}).get("parts"):
+        raise AIAnalysisError("A API respondeu HTTP 200, mas sem conteúdo de resposta.")
+    st.session_state.ai_diagnostics=f"Teste simples OK · HTTP 200 · modelo {model}"
+    return model
+
+
 def run_gemini_analysis(context,prompt):
     try:
         config = dict(st.secrets.get("ai",{}))
@@ -462,6 +497,7 @@ def run_gemini_analysis(context,prompt):
         "contents":[{"role":"user","parts":[{"text":json.dumps({"pergunta":prompt,"contexto":context},ensure_ascii=False,allow_nan=False)}]}],
         "generationConfig":{"responseMimeType":"application/json","responseSchema":ai_schema(),"maxOutputTokens":8192},
     }
+    st.session_state.pop("ai_diagnostics",None)
     response = None
     for attempt in range(2):
         try:
@@ -472,10 +508,15 @@ def run_gemini_analysis(context,prompt):
                 continue
             raise AIAnalysisError("Não foi possível conectar ao Gemini. O dashboard continua disponível.") from None
         if response.status_code in [500,502,503,504] and attempt == 0:
-            time.sleep(1)
+            # Mesmo modelo, chamada alternativa sem schema rígido; nunca troca para plano pago.
+            st.session_state.ai_diagnostics=gemini_error_details(response,key)
+            payload["generationConfig"].pop("responseSchema",None)
+            payload["systemInstruction"]["parts"][0]["text"] = AI_SYSTEM + "\nEstrutura JSON obrigatória: " + json.dumps(ai_schema(),ensure_ascii=False)
+            time.sleep(2)
             continue
         break
     if response.status_code != 200:
+        st.session_state.ai_diagnostics=gemini_error_details(response,key)
         messages={400:"O Gemini recusou a configuração. Confira a chave, o modelo e sua disponibilidade no AI Studio.",401:"Chave Gemini inválida. Confira [ai].api_key nos Secrets.",403:"A chave não tem acesso ao Gemini. Confira as permissões e a API habilitada no projeto.",404:"Modelo não disponível para esta chave. Confira o nome nos Secrets e os modelos disponíveis no AI Studio.",429:"A cota gratuita ou o limite de chamadas foi atingido. Aguarde e tente novamente. O app não muda para plano pago.",500:"O Gemini está indisponível no momento. Tente novamente mais tarde.",503:"O Gemini está indisponível no momento. Tente novamente mais tarde."}
         raise AIAnalysisError(messages.get(response.status_code,"O Gemini não confirmou a análise. Tente novamente mais tarde."))
     try:
@@ -487,6 +528,7 @@ def run_gemini_analysis(context,prompt):
         result=validate_ai_result(json.loads(text))
     except (IndexError,KeyError,ValueError,TypeError):
         raise AIAnalysisError("A resposta não veio completa. Tente novamente; nenhuma configuração foi alterada.") from None
+    st.session_state.ai_diagnostics="Análise concluída · HTTP 200 · modelo "+model
     # Segunda barreira: ações técnicas não chegam aos cards de recomendação.
     def operational(text):
         normalized = unicodedata.normalize("NFKD",text.lower()).encode("ascii","ignore").decode()
@@ -534,6 +576,20 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
                     st.error("Não foi possível concluir a análise. O dashboard continua disponível.")
                 else:
                     st.session_state.ai_result={"data":result,"fingerprint":fingerprint,"prompt":question}
+        with st.expander("Diagnóstico da conexão"):
+            st.caption("Teste simples com a mesma chave e o mesmo modelo, sem dados da planilha.")
+            if st.button("Testar conexão Gemini",key="test_ai_connection",use_container_width=True):
+                try:
+                    with st.spinner("Testando a API…"):
+                        model=test_gemini_connection()
+                except AIAnalysisError as exc:
+                    st.error(str(exc))
+                except Exception:
+                    st.error("Não foi possível concluir o teste. Confira os Secrets.")
+                else:
+                    st.success("A API respondeu ao teste simples com "+model+".")
+            if st.session_state.get("ai_diagnostics"):
+                st.code(st.session_state.ai_diagnostics,language=None)
         saved=st.session_state.get("ai_result")
         if not saved:
             return
