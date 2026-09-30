@@ -13,14 +13,21 @@ CONFIGURAÇÃO DA GRAVAÇÃO (uma vez no Streamlit Cloud):
    uma string TOML multilinha com as quebras de linha da chave JSON.
 4. Opcionalmente defina spreadsheet_id nos Secrets. O padrão é a planilha
    original. Não coloque a chave no GitHub.
-As atualizações alteram apenas cinco células da linha da estratégia em
-cost_parameters. Custos históricos em dashboard_fact NÃO são reescritos.
+Configurações > Estratégias cria/edita strategy e strategy_steps numa operação
+atômica. Novas estratégias copiam uma linha de cost_parameters do modelo
+selecionado. As sequências antigas são adequadas automaticamente na primeira
+conexão autenticada: texto deixa de ser etapa independente e fica vinculado ao
+WhatsApp Call no campo goal. Nomes, IDs, ANI e status existentes são mantidos.
+Configurações > Custos altera cinco células da estratégia em cost_parameters.
+Custos históricos e tentativas em dashboard_fact NÃO são reescritos.
+Não exige novas dependências além das já utilizadas, incluindo google-auth.
 """
 import html
 import io
 import math
 import os
 import re
+import uuid
 from urllib.parse import quote
 
 import pandas as pd
@@ -224,12 +231,15 @@ def load_data():
         try:
             session, api_url = sheets_session()
             with session:
-                response = session.get(api_url+"/"+quote("'cost_parameters'!A1:ZZ", safe=""), timeout=30)
+                response = session.get(api_url+":batchGet", params={"ranges":["strategy", "strategy_steps", "cost_parameters"],"valueRenderOption":"UNFORMATTED_VALUE"}, timeout=30)
                 response.raise_for_status()
-                rows = response.json().get("values", [])
-                if not rows:
-                    raise ValueError("A aba cost_parameters está vazia.")
-                costs = pd.DataFrame([row[:len(rows[0])]+[None]*max(0,len(rows[0])-len(row)) for row in rows[1:]], columns=rows[0])
+                tables = {}
+                for name,item in zip(["strategy", "strategy_steps", "cost_parameters"],response.json().get("valueRanges", [])):
+                    rows = item.get("values", [])
+                    if not rows:
+                        raise CostConfigurationError(f"A aba {name} está vazia.")
+                    tables[name] = pd.DataFrame([row[:len(rows[0])]+[None]*max(0,len(rows[0])-len(row)) for row in rows[1:]], columns=rows[0])
+                sheets["strategy"], sheets["strategy_steps"], costs = tables["strategy"], tables["strategy_steps"], tables["cost_parameters"]
         except Exception as exc:
             cost_error = authentication_error(exc)
     return fact, sheets["strategy"], sheets["strategy_steps"], costs, cost_error
@@ -310,6 +320,105 @@ except Exception as exc:
         st.code(str(exc))
     st.stop()
 
+VOICE_ACTIONS = {"whatsapp_call":"WhatsApp Call", "branded_call":"Branded Call", "traditional_call":"Telefonia Tradicional"}
+WHATSAPP_DEPENDENCY = "Sem consentimento, enviar template de opt-in para WhatsApp Call. Se o cliente responder por texto em vez de aprovar ou negar, o bot esclarece o motivo e agenda contato no canal preferido."
+
+
+def normalize_strategy_steps(frame):
+    """Texto nunca é ação independente. Mantém os demais passos e seus parâmetros."""
+    rows = []
+    if frame.empty:
+        return frame.copy()
+    for strategy_id, group in frame.groupby("strategy_id", sort=False):
+        group = group.sort_values("step_order",key=lambda x:pd.to_numeric(x,errors="coerce"),kind="stable")
+        has_call = group["channel"].eq("whatsapp_call").any()
+        voice = []
+        for _, original in group.iterrows():
+            row = original.to_dict()
+            if row["channel"] == "whatsapp_text":
+                if has_call:
+                    continue
+                row["channel"] = "whatsapp_call"
+                has_call = True
+            if row["channel"] not in VOICE_ACTIONS:
+                raise CostConfigurationError("Há um canal desconhecido em strategy_steps. Revise a sequência na planilha.")
+            voice.append(row)
+        for index, row in enumerate(voice, start=1):
+            row["step_order"] = index
+            if row["channel"] == "whatsapp_call":
+                row["goal"] = WHATSAPP_DEPENDENCY
+            rows.append(row)
+    return pd.DataFrame(rows,columns=list(dict.fromkeys(list(frame.columns)+["goal"])))
+
+
+def table_values(frame):
+    return [list(frame.columns)] + [[None if pd.isna(v) else v.item() if hasattr(v,"item") else v for v in row] for row in frame.itertuples(index=False,name=None)]
+
+
+def canonical_rows(rows):
+    def text(value):
+        if value is None:
+            return ""
+        if isinstance(value,(int,float)):
+            return str(float(value))
+        return str(value)
+    normalized = [list(map(text,row)) for row in rows]
+    normalized = [row for row in normalized if any(row)]
+    width = max([len(row) for row in normalized]+[0])
+    return [row+[""]*(width-len(row)) for row in normalized]
+
+
+def save_configuration_tables(changed, expected):
+    """Uma operação atômica para estratégia, passos e custos, sem perder colunas extras."""
+    session, values_url = sheets_session()
+    base_url = values_url.rsplit("/values",1)[0]
+    with session:
+        read = session.get(values_url+":batchGet",params={"ranges":list(changed),"valueRenderOption":"UNFORMATTED_VALUE"},timeout=30)
+        read.raise_for_status()
+        ranges = read.json().get("valueRanges",[])
+        if len(ranges) != len(changed):
+            raise CostConfigurationError("Não foi possível conferir as abas antes de salvar.")
+        current = {name:item.get("values",[]) for name,item in zip(changed,ranges)}
+        for name in changed:
+            if canonical_rows(current[name]) != canonical_rows(table_values(expected[name])):
+                raise CostConfigurationError("A configuração mudou na planilha. Clique em Recarregar configurações antes de salvar.")
+        metadata = session.get(base_url,params={"fields":"sheets.properties"},timeout=30)
+        metadata.raise_for_status()
+        properties = {item["properties"]["title"]:item["properties"] for item in metadata.json()["sheets"]}
+        requests_list = []
+        for name,frame in changed.items():
+            if name not in properties:
+                raise CostConfigurationError(f"A aba {name} não existe.")
+            props = properties[name]
+            values = table_values(frame)
+            height = max(len(values),len(current[name]))
+            width = len(frame.columns)
+            if height > props["gridProperties"]["rowCount"]:
+                requests_list.append({"appendDimension":{"sheetId":props["sheetId"],"dimension":"ROWS","length":height-props["gridProperties"]["rowCount"]}})
+            if width > props["gridProperties"]["columnCount"]:
+                requests_list.append({"appendDimension":{"sheetId":props["sheetId"],"dimension":"COLUMNS","length":width-props["gridProperties"]["columnCount"]}})
+            grid_rows = []
+            for row in values:
+                cells = []
+                for value in row:
+                    cell = {} if value is None else {"userEnteredValue": {"boolValue":value} if isinstance(value,bool) else {"numberValue":value} if isinstance(value,(int,float)) else {"stringValue":str(value)}}
+                    cells.append(cell)
+                grid_rows.append({"values":cells})
+            # Limpa apenas valores excedentes do bloco antigo; preserva formatos e outras abas.
+            requests_list.append({"updateCells":{"range":{"sheetId":props["sheetId"],"startRowIndex":0,"endRowIndex":height,"startColumnIndex":0,"endColumnIndex":width},"rows":grid_rows,"fields":"userEnteredValue"}})
+        result = session.post(base_url+":batchUpdate",json={"requests":requests_list},timeout=30)
+        result.raise_for_status()
+
+
+def strategy_preview(channels):
+    cards = []
+    for channel in channels:
+        kind = "bars" if channel=="branded_call" else "phone"
+        color = "#00cdb2" if channel=="whatsapp_call" else "#168bff"
+        cards.append(f'<div class="step"><div class="step-card">{icon(kind,color)}<span>{VOICE_ACTIONS[channel]}</span></div></div>')
+    return '<div class="cockpit"><div class="flow">'+ '<span class="arrow">→</span>'.join(cards)+'</div></div>'
+
+
 def save_cost_parameters(strategy_id, values, expected):
     """Grava somente cinco parâmetros, após comparar com a versão lida."""
     session, url = sheets_session()
@@ -345,15 +454,33 @@ def save_cost_parameters(strategy_id, values, expected):
             raise ValueError("A planilha não confirmou a atualização completa. Verifique os parâmetros.")
 
 
+raw_steps = df_steps.copy()
+try:
+    df_steps = normalize_strategy_steps(raw_steps)
+    needs_migration = canonical_rows(table_values(raw_steps)) != canonical_rows(table_values(df_steps))
+except CostConfigurationError as exc:
+    needs_migration = False
+    cost_connection_error = str(exc)
+if needs_migration and writer_configured() and not cost_connection_error:
+    try:
+        save_configuration_tables({"strategy_steps":df_steps},{"strategy_steps":raw_steps})
+    except Exception as exc:
+        cost_connection_error = authentication_error(exc)
+    else:
+        load_data.clear()
+        st.session_state.configuration_notice = "Estratégias atuais adequadas: WhatsApp texto ficou vinculado ao WhatsApp Call."
+        st.rerun()
+
+
 if "costs_open" not in st.session_state:
     st.session_state.costs_open = False
-_, cost_button_column = st.columns([8,1])
+_, cost_button_column = st.columns([7,2])
 with cost_button_column:
-    if st.button("⚙ Custos", help="Editar custos da estratégia", use_container_width=True):
+    if st.button("⚙ Configurações", help="Configurar estratégias e custos", use_container_width=True):
         st.session_state.costs_open = not st.session_state.costs_open
 sidebar_display = "block" if st.session_state.costs_open else "none"
 st.markdown(f"""<style>
-[data-testid="stSidebar"] {{display:{sidebar_display}!important;position:fixed!important;right:0!important;left:auto!important;top:0!important;bottom:0!important;width:min(370px,100vw)!important;min-width:0!important;max-width:100vw!important;transform:none!important;z-index:999;background:#03182f;border-left:1px solid #2264a7;box-shadow:-15px 0 45px #0008;}}
+[data-testid="stSidebar"] {{display:{sidebar_display}!important;position:fixed!important;right:0!important;left:auto!important;top:0!important;bottom:0!important;width:min(440px,100vw)!important;min-width:0!important;max-width:100vw!important;transform:none!important;z-index:999;background:#03182f;border-left:1px solid #2264a7;box-shadow:-15px 0 45px #0008;}}
 [data-testid="stSidebarContent"] {{width:100%!important;}}
 [data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapsedControl"] {{display:none!important;}}
 [data-testid="stSidebar"] h2 {{font-size:22px;}}
@@ -364,47 +491,139 @@ if st.session_state.costs_open:
         if st.button("Fechar ×", use_container_width=True):
             st.session_state.costs_open = False
             st.rerun()
-        st.subheader("Custos da estratégia")
-        st.caption("Edite os valores em reais e salve na planilha.")
-        if cost_connection_error:
-            st.warning(cost_connection_error)
-        cost_names = df_strat["strategy_name"].dropna().tolist()
-        edit_strategy = st.selectbox("Aplicar à estratégia",cost_names,key="cost_edit_strategy")
-        edit_id = df_strat.loc[df_strat["strategy_name"].eq(edit_strategy),"strategy_id"].iloc[0]
-        cost_rows = df_costs[df_costs["strategy_id"].eq(edit_id)]
-        if len(cost_rows) != 1 or any(field not in df_costs for field in COST_LABELS):
-            st.error("Cadastre os cinco parâmetros e uma única linha desta estratégia em cost_parameters.")
-        else:
-            source = cost_rows.iloc[0]
-            expected = {field:numeric(source[field]) for field in COST_LABELS}
-            with st.form("cost_parameters_form"):
-                values = {field:st.number_input(label,min_value=0.0,value=expected[field],step=0.01,format="%.4f",key=f"cost_{edit_id}_{field}_{expected[field]}") for field,label in COST_LABELS.items()}
-                submit = st.form_submit_button("Atualizar custos",use_container_width=True)
-            st.caption("A atualização vale para esta estratégia. Os custos históricos das tentativas são preservados.")
-            if not writer_configured():
-                st.info("A gravação na planilha ainda precisa ser conectada.")
-                with st.expander("Como habilitar a gravação"):
-                    st.markdown("Adicione `google-auth` ao requirements.txt. Habilite a Google Sheets API, compartilhe a planilha como Editor com uma conta de serviço e adicione a chave dessa conta em Settings → Secrets, na seção `[gcp_service_account]`. Não publique a chave no GitHub.")
-            if submit:
-                if not writer_configured():
-                    st.error("Configure o acesso ao Google Sheets antes de atualizar custos.")
+        st.subheader("Configurações")
+        if st.button("Recarregar configurações",use_container_width=True):
+            load_data.clear()
+            st.rerun()
+        strategy_tab, costs_tab = st.tabs(["Estratégias", "Custos"])
+        with strategy_tab:
+            st.caption("Defina a ordem das ações de voz. WhatsApp texto faz parte do fluxo de consentimento do WhatsApp Call.")
+            if cost_connection_error:
+                st.warning(cost_connection_error)
+            if needs_migration:
+                st.info("As sequências foram adequadas na visualização. A sincronização com a planilha depende da conexão autenticada.")
+            mode = st.radio("Operação",["Criar estratégia", "Editar estratégia"], horizontal=True)
+            editing = mode == "Editar estratégia"
+            chosen_id = None
+            existing_row = pd.Series(dtype=object)
+            if editing:
+                chosen_name = st.selectbox("Estratégia para editar",df_strat["strategy_name"].tolist(),key="strategy_edit_name")
+                existing_row = df_strat[df_strat["strategy_name"].eq(chosen_name)].iloc[0]
+                chosen_id = existing_row["strategy_id"]
+            editor_key = str(chosen_id) if editing else "new"
+            current_steps = df_steps[df_steps["strategy_id"].eq(chosen_id)].sort_values("step_order") if editing else pd.DataFrame()
+            initial_sequence = current_steps["channel"].tolist() if not current_steps.empty else ["traditional_call", "branded_call", "whatsapp_call"]
+            count = st.number_input("Número de ações",min_value=1,max_value=max(12,len(initial_sequence)),value=len(initial_sequence),step=1,key=f"step_count_{editor_key}")
+            with st.form(f"strategy_form_{editor_key}"):
+                strategy_name = st.text_input("Nome",value=str(existing_row.get("strategy_name","")),max_chars=100)
+                strategy_description = st.text_area("Descrição",value=str(existing_row.get("objective","")),max_chars=1000)
+                sequence = []
+                icons = {"whatsapp_call":"☎", "branded_call":"▥", "traditional_call":"☏"}
+                for position in range(int(count)):
+                    default = initial_sequence[position] if position < len(initial_sequence) else "traditional_call"
+                    sequence.append(st.selectbox(f"Ação {position+1}",list(VOICE_ACTIONS),index=list(VOICE_ACTIONS).index(default),format_func=lambda c:icons[c]+" "+VOICE_ACTIONS[c],key=f"sequence_{editor_key}_{position}"))
+                if not editing:
+                    cost_template = st.selectbox("Copiar custos iniciais de",df_strat["strategy_name"].tolist(),help="Os custos poderão ser alterados na aba Custos após a criação.")
+                strategy_submit = st.form_submit_button("Salvar estratégia" if editing else "Criar estratégia",use_container_width=True)
+            st.markdown(strategy_preview(sequence),unsafe_allow_html=True)
+            if "whatsapp_call" in sequence:
+                st.info("WhatsApp Call inclui opt-in quando não há consentimento. Se o cliente começar a conversar por texto, o bot esclarece o motivo e agenda contato no canal preferido.")
+            if strategy_submit:
+                name = strategy_name.strip()
+                description = strategy_description.strip()
+                others = df_strat if not editing else df_strat[~df_strat["strategy_id"].eq(chosen_id)]
+                if not name or not description:
+                    st.error("Preencha nome e descrição.")
+                elif others["strategy_name"].astype(str).str.strip().str.casefold().eq(name.casefold()).any():
+                    st.error("Já existe uma estratégia com esse nome.")
+                elif not writer_configured() or cost_connection_error:
+                    st.error("Conecte a conta de serviço ao Google Sheets antes de salvar.")
                 else:
+                    new_id = chosen_id if editing else "ST_"+uuid.uuid4().hex[:12].upper()
+                    strategy_row = existing_row.to_dict() if editing else {c:None for c in df_strat.columns}
+                    strategy_row.update(strategy_id=new_id,strategy_name=name,objective=description)
+                    if not editing:
+                        strategy_row["status"] = "Ativa"
+                    new_strategies = df_strat.copy()
+                    if editing:
+                        for key,value in strategy_row.items():
+                            new_strategies.loc[new_strategies["strategy_id"].eq(new_id),key]=value
+                    else:
+                        new_strategies = pd.concat([new_strategies,pd.DataFrame([strategy_row])],ignore_index=True)
+                    step_rows = []
+                    for position,channel in enumerate(sequence):
+                        # Reutiliza parâmetros ocultos somente quando a ação na posição não mudou.
+                        row = current_steps.iloc[position].to_dict() if position<len(current_steps) and current_steps.iloc[position]["channel"]==channel else {c:None for c in df_steps.columns}
+                        row.update(strategy_id=new_id,step_order=position+1,channel=channel)
+                        row["goal"] = WHATSAPP_DEPENDENCY if channel=="whatsapp_call" else "Contato por "+VOICE_ACTIONS[channel]
+                        if pd.isna(row.get("wait_minutes")):
+                            row["wait_minutes"] = 0
+                        step_rows.append(row)
+                    new_steps = pd.concat([df_steps[~df_steps["strategy_id"].eq(new_id)],pd.DataFrame(step_rows)],ignore_index=True)
+                    changed = {"strategy":new_strategies,"strategy_steps":new_steps}
+                    expected_tables = {"strategy":df_strat,"strategy_steps":raw_steps}
+                    if not editing:
+                        template_id = df_strat.loc[df_strat["strategy_name"].eq(cost_template),"strategy_id"].iloc[0]
+                        template_rows = df_costs[df_costs["strategy_id"].eq(template_id)]
+                        if len(template_rows)!=1:
+                            st.error("A estratégia escolhida como modelo precisa ter uma linha de custos cadastrada.")
+                            st.stop()
+                        cost_row = template_rows.iloc[0].to_dict()
+                        cost_row["strategy_id"] = new_id
+                        changed["cost_parameters"] = pd.concat([df_costs,pd.DataFrame([cost_row])],ignore_index=True)
+                        expected_tables["cost_parameters"] = df_costs
                     try:
-                        save_cost_parameters(edit_id,values,expected)
-                    except ImportError:
-                        st.error("Adicione google-auth ao requirements.txt e reinicie o app.")
-                    except CostConfigurationError as exc:
-                        st.error(authentication_error(exc))
-                    except ValueError as exc:
-                        safe_prefixes = ("A aba cost_parameters", "A estratégia deve", "Parâmetro ausente", "Os custos foram", "A planilha não confirmou")
-                        st.error(str(exc) if str(exc).startswith(safe_prefixes) else authentication_error(exc))
-                        load_data.clear()
+                        save_configuration_tables(changed,expected_tables)
                     except Exception as exc:
                         st.error(authentication_error(exc))
                     else:
                         load_data.clear()
-                        st.session_state.costs_saved = edit_strategy
+                        st.session_state.configuration_notice = f"Estratégia {name} salva na planilha."
                         st.rerun()
+        with costs_tab:
+            st.subheader("Custos da estratégia")
+            st.caption("Edite os valores em reais e salve na planilha.")
+            if cost_connection_error:
+                st.warning(cost_connection_error)
+            cost_names = df_strat["strategy_name"].dropna().tolist()
+            edit_strategy = st.selectbox("Aplicar à estratégia",cost_names,key="cost_edit_strategy")
+            edit_id = df_strat.loc[df_strat["strategy_name"].eq(edit_strategy),"strategy_id"].iloc[0]
+            cost_rows = df_costs[df_costs["strategy_id"].eq(edit_id)]
+            if len(cost_rows) != 1 or any(field not in df_costs for field in COST_LABELS):
+                st.error("Cadastre os cinco parâmetros e uma única linha desta estratégia em cost_parameters.")
+            else:
+                source = cost_rows.iloc[0]
+                expected = {field:numeric(source[field]) for field in COST_LABELS}
+                with st.form("cost_parameters_form"):
+                    values = {field:st.number_input(label,min_value=0.0,value=expected[field],step=0.01,format="%.4f",key=f"cost_{edit_id}_{field}_{expected[field]}") for field,label in COST_LABELS.items()}
+                    submit = st.form_submit_button("Atualizar custos",use_container_width=True)
+                st.caption("A atualização vale para esta estratégia. Os custos históricos das tentativas são preservados.")
+                if not writer_configured():
+                    st.info("A gravação na planilha ainda precisa ser conectada.")
+                    with st.expander("Como habilitar a gravação"):
+                        st.markdown("Adicione `google-auth` ao requirements.txt. Habilite a Google Sheets API, compartilhe a planilha como Editor com uma conta de serviço e adicione a chave dessa conta em Settings → Secrets, na seção `[gcp_service_account]`. Não publique a chave no GitHub.")
+                if submit:
+                    if not writer_configured():
+                        st.error("Configure o acesso ao Google Sheets antes de atualizar custos.")
+                    else:
+                        try:
+                            save_cost_parameters(edit_id,values,expected)
+                        except ImportError:
+                            st.error("Adicione google-auth ao requirements.txt e reinicie o app.")
+                        except CostConfigurationError as exc:
+                            st.error(authentication_error(exc))
+                        except ValueError as exc:
+                            safe_prefixes = ("A aba cost_parameters", "A estratégia deve", "Parâmetro ausente", "Os custos foram", "A planilha não confirmou")
+                            st.error(str(exc) if str(exc).startswith(safe_prefixes) else authentication_error(exc))
+                            load_data.clear()
+                        except Exception as exc:
+                            st.error(authentication_error(exc))
+                        else:
+                            load_data.clear()
+                            st.session_state.costs_saved = edit_strategy
+                            st.rerun()
+if "configuration_notice" in st.session_state:
+    st.success(st.session_state.pop("configuration_notice"))
 if "costs_saved" in st.session_state:
     st.success(f"Custos de {st.session_state.pop('costs_saved')} atualizados na planilha.")
 
@@ -413,7 +632,11 @@ if df_fact.empty:
     st.info("A aba dashboard_fact ainda não contém tentativas.")
     st.stop()
 
-names = list(df_fact["strategy_name"].dropna().unique())
+# Metadados atuais prevalecem sobre os nomes históricos das tentativas.
+if "strategy_id" in df_fact:
+    name_map = df_strat.set_index("strategy_id")["strategy_name"]
+    df_fact["strategy_name"] = df_fact["strategy_id"].map(name_map).fillna(df_fact["strategy_name"])
+names = list(dict.fromkeys(df_strat["strategy_name"].dropna().tolist()+df_fact["strategy_name"].dropna().tolist()))
 names.sort(key=lambda n: (n != "Custo Eficiente", n != "Máximo Contato", str(n)))
 valid_dates = df_fact["_date"].dropna()
 f1, f2, f3 = st.columns([1.1, 1.1, 2.8])
@@ -488,7 +711,7 @@ for pos, (_, row) in enumerate(steps.iterrows()):
     channel = str(row.get("channel", ""))
     color = "#00cdb2" if "whatsapp" in channel.lower() else "#168bff"
     kind = "chat" if "text" in channel.lower() else "bars" if "branded" in channel.lower() else "phone"
-    flow.append(f'<div class="step"><div class="step-card">{icon(kind,color)}<span>{esc(channel_name(channel))}</span></div></div>')
+    flow.append(f'<div class="step"><div class="step-card">{icon(kind,color)}<span>{esc(VOICE_ACTIONS.get(channel,channel_name(channel)))}</span></div></div>')
 flow_html = '<div class="flow">'+ '<span class="arrow">→</span>'.join(flow) + '</div>' if flow else '<div class="empty">Sequência não cadastrada.</div>'
 # Os valores configurados vêm exclusivamente da aba cost_parameters.
 cost_record = df_costs[df_costs["strategy_id"].eq(record.get("strategy_id"))]
@@ -499,7 +722,8 @@ for (field, _), label in zip(COST_LABELS.items(), short_labels):
     tariff = cost_record.get(field)
     settings.append(f'<div><small>{label}</small><b>{money(numeric(tariff)) if tariff is not None and pd.notna(tariff) else "—"}</b></div>')
 ani = next((record[c] for c in ["ani", "caller_id", "bina"] if c in record and pd.notna(record[c])), "Não informado")
-config_body = f'<div class="panel-body"><div class="config-head"><h3>{esc(detail_name)}</h3><div class="meta"><div><small>ANI</small>{esc(ani)}</div><div><small>Objetivo central</small>{esc(record.get("objective","—"))}</div></div></div><div class="sequence-label">Sequência de abordagem</div>{flow_html}<div class="sequence-label">Custos configurados da estratégia</div><div class="cost-settings">{"".join(settings)}</div></div>'
+dependency_note = '<div class="funnel-note">WhatsApp Call: opt-in quando não houver consentimento. Se houver resposta por texto, o bot esclarece o motivo e agenda contato no canal preferido.</div>' if not steps.empty and steps["channel"].eq("whatsapp_call").any() else ""
+config_body = f'<div class="panel-body"><div class="config-head"><h3>{esc(detail_name)}</h3><div class="meta"><div><small>ANI</small>{esc(ani)}</div><div><small>Objetivo central</small>{esc(record.get("objective","—"))}</div></div></div><div class="sequence-label">Sequência de abordagem</div>{flow_html}{dependency_note}<div class="sequence-label">Custos configurados da estratégia</div><div class="cost-settings">{"".join(settings)}</div></div>'
 config_panel = panel("Configuração da Estratégia Selecionada", config_body, '<span class="badge">● Estratégia selecionada</span>')
 
 m = metrics(detail)
