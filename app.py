@@ -609,6 +609,23 @@ def groq_config():
     return key, model
 
 
+GROQ_BUSINESS_SYSTEM = """Você assessora um gestor de negócio em português simples. Use apenas dados enviados.
+Separe evidência, hipótese e ação. Não invente causas, valores ou projeções. Base pode ser demonstrativa.
+Objetivos: contato efetivo, custo, público, oferta, abordagem e qualidade dos leads.
+Sugira horários e canais por perfil só com evidência. Sem DDD, origem, segmento ou conversão, não conclua sobre eles.
+Não recomendar soluções técnicas: operadoras, rotação de números, AMD, caixa postal, screening, retries,
+limites de tentativas, cadências ou parâmetros do discador. Isso cabe à equipe interna da Nuveto.
+Telefone tocando sem resposta não prova recusa, bloqueio, desinteresse ou número inválido.
+WhatsApp texto só existe como resposta ao pedido de autorização para WhatsApp Call, nunca como ação independente.
+Pessoas e tentativas são métricas diferentes; não some pessoas entre canais. Resultado produtivo não prova venda.
+Custos são históricos; alterar tarifas não recalcula o passado. Registros excluídos não são tentativas executadas.
+Compare grupos como observação, sem causalidade. Não exponha campos de banco, códigos ou termos técnicos.
+Dê até 3 recomendações com evidência numérica disponível. Confiança: alta, média ou baixa.
+Linha do tempo: testes e validações em 7, 14 e 30 dias; ganhos futuros não estimados.
+Retorne somente JSON com todos os campos do formato exigido. Frases curtas, sem HTML ou markdown.
+"""
+
+
 class AIRequestTooLarge(AIAnalysisError):
     pass
 
@@ -657,9 +674,12 @@ def record_groq_usage(response, budget_id, payload, estimate):
     bucket["last"] = {**measured,"estimated_input":estimate,"output_reserved":payload["max_completion_tokens"],"http":response.status_code}
     if measured.get("prompt_tokens"):
         raw = json.dumps({"messages":payload["messages"],"response_format":payload.get("response_format")},ensure_ascii=False,separators=(",",":"))
-        ratio = measured["prompt_tokens"]/max(1,len(raw.encode("utf-8")))
-        factors=st.session_state.setdefault("groq_token_factors",{})
-        factors[budget_id] = max(factors.get(budget_id,0.5),ratio)
+        raw_bytes = len(raw.encode("utf-8"))
+        # Testes curtos têm overhead desproporcional e não calibram análises.
+        if raw_bytes >= 1000:
+            ratio = measured["prompt_tokens"]/raw_bytes
+            factors=st.session_state.setdefault("groq_token_factors",{})
+            factors[budget_id] = max(factors.get(budget_id,0.5),ratio)
 
 
 def check_groq_budget(payload, key, model):
@@ -672,6 +692,7 @@ def check_groq_budget(payload, key, model):
     estimate=estimate_groq_input(payload,budget_id)
     required=estimate+payload["max_completion_tokens"]
     if required>int(limit*0.9):
+        st.session_state.ai_diagnostics = f"Preparação local: entrada estimada {estimate}, reserva de saída {payload['max_completion_tokens']}, orçamento {int(limit*0.9)}. Nenhuma chamada enviada."
         raise AIRequestTooLarge("Não foi possível preparar uma análise completa neste momento. Tente novamente mais tarde.")
     now=time.time()
     blocked=snapshot.get("blocked_until",0)
@@ -769,9 +790,9 @@ def compact_ai_context(context, prompt, minimal=False):
             details += [(k,v) for k,v in context.items() if k in ["recorte_lead_source","recorte_segment"]]
     omitted = False
     def size():
-        return len((AI_SYSTEM + prompt + json.dumps(business_context(summary),ensure_ascii=False,separators=(",",":"))).encode("utf-8"))
+        return len((GROQ_BUSINESS_SYSTEM + prompt + json.dumps(business_context(summary),ensure_ascii=False,separators=(",",":"))).encode("utf-8"))
     # Margem para schema, resposta e diferença entre caracteres e tokens; não é tokenização exata.
-    budget = 5000 if minimal else 6500
+    budget = 4000 if minimal else 4800
     for name,rows in details:
         ranked = sorted(rows,key=lambda r:r.get("tentativas",0),reverse=True)
         summary[name] = []
@@ -794,7 +815,7 @@ def run_ai_analysis(context, prompt):
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"groq-output-v2"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"groq-budget-v3"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -807,7 +828,7 @@ def run_ai_analysis(context, prompt):
         def messages_for(value, recovery=False):
             brevity = "\nComplete todos os campos do JSON. Resumo até 300 caracteres. Cada campo de recomendação até 160 caracteres. Cada campo da linha do tempo até 120 caracteres. Até 2 limitações curtas."
             if recovery: brevity += "\nNesta resposta, use somente 1 recomendação principal e 3 etapas curtas; mantenha todas as propriedades obrigatórias."
-            return [{"role":"system","content":AI_SYSTEM + brevity + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
+            return [{"role":"system","content":GROQ_BUSINESS_SYSTEM + brevity + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
         try:
             content = groq_request(messages_for(summary))
         except (AIRequestTooLarge, AIOutputIncomplete):
