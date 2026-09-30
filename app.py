@@ -145,9 +145,26 @@ def sheets_session():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_data():
-    response = requests.get(SHEET_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-    response.raise_for_status()
-    sheets = pd.read_excel(io.BytesIO(response.content), sheet_name=["dashboard_fact", "strategy", "strategy_steps", "cost_parameters"])
+    required_sheets = ["dashboard_fact", "strategy", "strategy_steps"]
+    cost_error = None
+    try:
+        response = requests.get(SHEET_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        response.raise_for_status()
+        workbook = pd.ExcelFile(io.BytesIO(response.content))
+        sheets = {name: pd.read_excel(workbook, sheet_name=name) for name in required_sheets}
+        sheets["cost_parameters"] = pd.read_excel(workbook, sheet_name="cost_parameters") if "cost_parameters" in workbook.sheet_names else pd.DataFrame(columns=["strategy_id"]+list(COST_LABELS))
+    except Exception:
+        # Também permite ler uma planilha privada quando o export público não funciona.
+        if not writer_configured():
+            raise
+        session, api_url = sheets_session()
+        with session:
+            response = session.get(api_url+":batchGet", params={"ranges":required_sheets+["cost_parameters"],"valueRenderOption":"FORMATTED_VALUE"},timeout=30)
+            response.raise_for_status()
+            sheets = {}
+            for name, item in zip(required_sheets+["cost_parameters"],response.json().get("valueRanges",[])):
+                rows = item.get("values",[])
+                sheets[name] = pd.DataFrame([row[:len(rows[0])]+[None]*max(0,len(rows[0])-len(row)) for row in rows[1:]],columns=rows[0]) if rows else pd.DataFrame(columns=["strategy_id"]+list(COST_LABELS))
     fact = sheets["dashboard_fact"].copy()
     required = {"contact_id", "strategy_name", "channel", "productive_flag", "unproductive_flag", "attempt_cost"}
     missing = required.difference(fact.columns)
@@ -165,17 +182,25 @@ def load_data():
     else:
         fact["_date"] = pd.NaT
     costs = sheets["cost_parameters"]
-    # Leitura autenticada evita o atraso do export XLSX após uma gravação.
+    # A falha no editor de custos NÃO deve derrubar os indicadores.
     if writer_configured():
-        session, api_url = sheets_session()
-        with session:
-            response = session.get(api_url+"/"+quote("'cost_parameters'!A1:ZZ", safe=""), timeout=30)
-            response.raise_for_status()
-            rows = response.json().get("values", [])
-            if not rows:
-                raise ValueError("A aba cost_parameters está vazia.")
-            costs = pd.DataFrame([row+[None]*(len(rows[0])-len(row)) for row in rows[1:]], columns=rows[0])
-    return fact, sheets["strategy"], sheets["strategy_steps"], costs
+        try:
+            session, api_url = sheets_session()
+            with session:
+                response = session.get(api_url+"/"+quote("'cost_parameters'!A1:ZZ", safe=""), timeout=30)
+                response.raise_for_status()
+                rows = response.json().get("values", [])
+                if not rows:
+                    raise ValueError("A aba cost_parameters está vazia.")
+                costs = pd.DataFrame([row[:len(rows[0])]+[None]*max(0,len(rows[0])-len(row)) for row in rows[1:]], columns=rows[0])
+        except ImportError:
+            cost_error = "Falta a dependência google-auth. Adicione-a ao requirements.txt e reinicie o app."
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else ""
+            cost_error = f"Google Sheets retornou HTTP {status}. Confira a API ativada, o ID da planilha e a permissão de Editor da conta de serviço."
+        except Exception:
+            cost_error = "Não foi possível autenticar a edição de custos. Confira os campos dos Secrets e as quebras de linha da private_key."
+    return fact, sheets["strategy"], sheets["strategy_steps"], costs, cost_error
 
 
 def outcome_frames(df):
@@ -246,7 +271,7 @@ hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>|
 st.markdown(hero, unsafe_allow_html=True)
 try:
     with st.spinner("Carregando indicadores…"):
-        df_fact, df_strat, df_steps, df_costs = load_data()
+        df_fact, df_strat, df_steps, df_costs, cost_connection_error = load_data()
 except Exception as exc:
     st.error("Não foi possível carregar a planilha. Verifique o compartilhamento, as abas e a conexão.")
     with st.expander("Detalhes do carregamento"):
@@ -309,6 +334,8 @@ if st.session_state.costs_open:
             st.rerun()
         st.subheader("Custos da estratégia")
         st.caption("Edite os valores em reais e salve na planilha.")
+        if cost_connection_error:
+            st.warning(cost_connection_error)
         cost_names = df_strat["strategy_name"].dropna().tolist()
         edit_strategy = st.selectbox("Aplicar à estratégia",cost_names,key="cost_edit_strategy")
         edit_id = df_strat.loc[df_strat["strategy_name"].eq(edit_strategy),"strategy_id"].iloc[0]
