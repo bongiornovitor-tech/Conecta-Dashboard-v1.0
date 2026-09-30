@@ -586,6 +586,10 @@ def run_gemini_analysis(context,prompt):
     except (IndexError,KeyError,ValueError,TypeError):
         raise AIAnalysisError("A resposta não veio completa. Tente novamente; nenhuma configuração foi alterada.") from None
     st.session_state.ai_diagnostics="Análise concluída · HTTP 200 · modelo "+model
+    return finish_ai_result(result)
+
+
+def finish_ai_result(result):
     # Segunda barreira: ações técnicas não chegam aos cards de recomendação.
     def operational(text):
         normalized = unicodedata.normalize("NFKD",text.lower()).encode("ascii","ignore").decode()
@@ -593,6 +597,88 @@ def run_gemini_analysis(context,prompt):
     result["recomendacoes"] = [row for row in result["recomendacoes"] if not operational(row["titulo"]+" "+row["acao"]+" "+row["validacao"])]
     result["linha_do_tempo"] = [row for row in result["linha_do_tempo"] if not operational(row["acao"]+" "+row["indicador"])]
     return business_text(result)
+
+
+
+def groq_config():
+    config = dict(st.secrets.get("ai", {}))
+    key = str(config.get("api_key", "")).strip()
+    model = str(config.get("model", "openai/gpt-oss-120b")).strip()
+    if not key or not re.fullmatch(r"[A-Za-z0-9._/-]+", model):
+        raise AIAnalysisError("Confira api_key e model na seção [ai] dos Secrets.")
+    return key, model
+
+
+def groq_request(messages, structured=True):
+    key, model = groq_config()
+    payload = {"model": model, "messages": messages, "max_completion_tokens": 2400}
+    if structured:
+        schema = ai_schema()
+        def strict_schema(node):
+            if isinstance(node, dict):
+                if isinstance(node.get("type"), str):
+                    node["type"] = node["type"].lower()
+                if node.get("type") == "object":
+                    node["additionalProperties"] = False
+                    node["required"] = list(node.get("properties", {}))
+                for value in node.values(): strict_schema(value)
+            elif isinstance(node, list):
+                for value in node: strict_schema(value)
+        strict_schema(schema)
+        payload["response_format"] = {"type":"json_schema", "json_schema":{"name":"business_analysis", "strict":True, "schema":schema}}
+    try:
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization":"Bearer " + key,"Content-Type":"application/json"}, json=payload, timeout=(10,45))
+    except requests.RequestException:
+        raise AIAnalysisError("Não foi possível conectar à Groq. Tente novamente mais tarde.") from None
+    if response.status_code != 200:
+        st.session_state.ai_diagnostics = gemini_error_details(response, key)
+        messages = {400:"A Groq recusou a configuração. Confira o modelo e os detalhes da conexão.",401:"Chave Groq inválida. Confira [ai].api_key nos Secrets.",403:"A chave não tem acesso ao modelo na Groq.",404:"Modelo não disponível na Groq. Confira [ai].model.",413:"O resumo ficou grande demais. Selecione uma estratégia ou um período menor.",429:"O limite gratuito da Groq foi atingido. Aguarde o período de renovação indicado nos detalhes da conexão. Não haverá troca automática de fornecedor.",500:"A Groq está indisponível. Tente novamente mais tarde.",503:"A Groq está indisponível. Tente novamente mais tarde."}
+        retry = response.headers.get("retry-after", "")
+        if retry and re.fullmatch(r"[0-9.]+", retry):
+            st.session_state.ai_diagnostics += " · Tentar novamente em " + retry + " segundos"
+        raise AIAnalysisError(messages.get(response.status_code,"A Groq não confirmou a análise. Confira os detalhes da conexão."))
+    try:
+        choice = response.json()["choices"][0]
+        if choice.get("finish_reason") != "stop":
+            raise AIAnalysisError("A resposta foi interrompida. Tente uma pergunta mais específica ou um recorte menor.")
+        content = choice["message"]["content"]
+        if not isinstance(content, str) or not content.strip(): raise ValueError()
+    except (KeyError,IndexError,TypeError,ValueError):
+        raise AIAnalysisError("A Groq respondeu sem conteúdo completo. Tente novamente.") from None
+    st.session_state.ai_diagnostics = "Groq · HTTP 200 · modelo " + model
+    return content
+
+
+def run_ai_analysis(context, prompt):
+    config = dict(st.secrets.get("ai", {}))
+    provider = str(config.get("provider", "gemini")).lower()
+    if provider not in ["groq", "gemini"]:
+        raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache = st.session_state.setdefault("ai_analysis_cache", {})
+    saved = cache.get(cache_key)
+    if saved and time.time() - saved["time"] < 3600:
+        st.session_state.ai_diagnostics = "Resposta reutilizada nesta sessão · sem nova chamada à API"
+        return json.loads(json.dumps(saved["result"]))
+    if provider == "gemini":
+        result = run_gemini_analysis(context, prompt)
+    else:
+        content = groq_request([{"role":"system","content":AI_SYSTEM + "\nSeja breve. No máximo 3 recomendações e 3 etapas de validação."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(context)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}])
+        try:
+            result = finish_ai_result(validate_ai_result(json.loads(content)))
+        except (ValueError,TypeError):
+            raise AIAnalysisError("A resposta não veio no formato esperado. Tente novamente.") from None
+    cache[cache_key] = {"time":time.time(),"result":result}
+    while len(cache) > 20: cache.pop(next(iter(cache)))
+    return result
+
+
+def test_ai_connection():
+    provider = str(st.secrets.get("ai", {}).get("provider", "gemini")).lower()
+    if provider == "gemini": return test_gemini_connection()
+    if provider != "groq": raise AIAnalysisError("Fornecedor de IA não reconhecido nos Secrets.")
+    groq_request([{"role":"user","content":"Responda somente: conexão funcionando."}], structured=False)
+    return groq_config()[1]
 
 
 def set_ai_prompt(value):
@@ -613,11 +699,11 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
         if "ai_prompt" not in st.session_state:
             st.session_state.ai_prompt = ""
         st.text_area("O que você quer entender?",key="ai_prompt",height=140,max_chars=2000,placeholder="Ex.: O que devo mudar no público ou na abordagem para aumentar contatos produtivos?")
-        st.caption("Envia um resumo agregado dos dados filtrados ao Gemini. Sem telefones ou IDs individuais. Não altera a planilha.")
+        st.caption("Envia um resumo agregado ao fornecedor de IA configurado. Sem telefones ou IDs individuais. Não altera a planilha.")
         if st.button("Analisar",key="run_ai",type="primary",use_container_width=True):
             question=st.session_state.ai_prompt.strip()
             if not question:
-                st.warning("Escreva uma pergunta ou escolha uma sugestão.")
+                st.warning("Escreva uma pergunta.")
             elif df.empty:
                 st.warning("Não há dados neste recorte para analisar.")
             elif time.time()-st.session_state.get("ai_last_request",0)<10:
@@ -626,7 +712,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
                 st.session_state.ai_last_request=time.time()
                 try:
                     with st.spinner("Interpretando os resultados…"):
-                        result=run_gemini_analysis(context,question)
+                        result=run_ai_analysis(context,question)
                 except AIAnalysisError as exc:
                     st.error(str(exc))
                 except Exception:
@@ -635,10 +721,10 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
                     st.session_state.ai_result={"data":result,"fingerprint":fingerprint,"prompt":question}
         with st.expander("Diagnóstico da conexão"):
             st.caption("Teste simples com a mesma chave e o mesmo modelo, sem dados da planilha.")
-            if st.button("Testar conexão Gemini",key="test_ai_connection",use_container_width=True):
+            if st.button("Testar conexão IA",key="test_ai_connection",use_container_width=True):
                 try:
                     with st.spinner("Testando a API…"):
-                        model=test_gemini_connection()
+                        model=test_ai_connection()
                 except AIAnalysisError as exc:
                     st.error(str(exc))
                 except Exception:
