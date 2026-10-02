@@ -18,8 +18,8 @@ atômica. Novas estratégias copiam uma linha de cost_parameters do modelo
 selecionado. As sequências antigas são adequadas automaticamente na primeira
 conexão autenticada: texto deixa de ser etapa independente e fica vinculado ao
 WhatsApp Call no campo goal. Nomes, IDs, ANI e status existentes são mantidos.
-Configurações > Custos altera cinco células da estratégia em cost_parameters.
-Custos históricos e tentativas em dashboard_fact NÃO são reescritos.
+Configurações > Custos altera sete parâmetros da estratégia em cost_parameters.
+Dashboard recalcula cenários pelas tarifas atuais; valores originais são preservados no app.
 Não exige novas dependências além das já utilizadas, incluindo google-auth.
 IA: configure [ai] nos Secrets, com provider="gemini", model="gemini-3.8-flash"
 e api_key. A chamada REST usa requests; não precisa instalar SDK adicional.
@@ -37,6 +37,8 @@ import json
 import hashlib
 import time
 import unicodedata
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 
 import pandas as pd
@@ -48,12 +50,16 @@ st.set_page_config(page_title="Conecta+ Strategy Cockpit", page_icon="☎", layo
 SHEET_URL = os.getenv("CONECTA_SHEET_URL", "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=xlsx")
 COLORS = ["#168bff", "#983bff", "#00dcc0", "#8aa8ff", "#f33b91"]
 COST_LABELS = {
-    "cost_branded_call": "Chamada com identificação da marca (R$/chamada)",
+    "cost_branded_call": "Chamada com identificação da marca (R$/impressão)",
     "cost_whatsapp_template": "Mensagem de consentimento WhatsApp (R$/mensagem)",
     "cost_meta_minute": "Chamada pelo WhatsApp — Meta (R$/minuto)",
     "cost_productive_minute": "Ligação produtiva (R$/minuto)",
     "cost_unproductive_minute": "Ligação improdutiva (R$/minuto)",
 }
+BRANDED_SUCCESS_FIELD = "branded_success_pct"
+OPTIN_EXCESS_FIELD = "cost_optin_excess"
+COST_PARAMETER_FIELDS = list(COST_LABELS)+[BRANDED_SUCCESS_FIELD,OPTIN_EXCESS_FIELD]
+
 CHANNELS = {"traditional_call": "Chamada tradicional", "branded_call": "Branded Call", "whatsapp_call": "WhatsApp Call", "whatsapp_text": "WhatsApp texto"}
 
 CSS = """
@@ -201,11 +207,13 @@ def sheets_session():
 def load_data():
     required_sheets = ["dashboard_fact", "strategy", "strategy_steps"]
     cost_error = None
+    billing_profile = pd.DataFrame()
     try:
         response = requests.get(SHEET_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
         response.raise_for_status()
         workbook = pd.ExcelFile(io.BytesIO(response.content))
         sheets = {name: pd.read_excel(workbook, sheet_name=name) for name in required_sheets}
+        billing_profile = pd.read_excel(workbook,sheet_name="billing_demo_profile") if "billing_demo_profile" in workbook.sheet_names else pd.DataFrame()
         sheets["cost_parameters"] = pd.read_excel(workbook, sheet_name="cost_parameters") if "cost_parameters" in workbook.sheet_names else pd.DataFrame(columns=["strategy_id"]+list(COST_LABELS))
     except Exception:
         # Também permite ler uma planilha privada quando o export público não funciona.
@@ -252,7 +260,136 @@ def load_data():
                 sheets["strategy"], sheets["strategy_steps"], costs = tables["strategy"], tables["strategy_steps"], tables["cost_parameters"]
         except Exception as exc:
             cost_error = authentication_error(exc)
-    return fact, sheets["strategy"], sheets["strategy_steps"], costs, cost_error
+    if writer_configured():
+        try:
+            session,api_url=sheets_session()
+            with session:
+                response=session.get(api_url+"/"+quote("'billing_demo_profile'!A1:ZZ",safe=""),params={"valueRenderOption":"UNFORMATTED_VALUE"},timeout=15)
+                response.raise_for_status()
+                rows=response.json().get("values",[])
+                if rows:
+                    billing_profile=pd.DataFrame([r+[None]*max(0,len(rows[0])-len(r)) for r in rows[1:]],columns=rows[0])
+        except Exception:
+            pass  # Modelo demonstrativo local mantém o quadro disponível antes da migração.
+    return fact, sheets["strategy"], sheets["strategy_steps"], costs, cost_error, billing_profile
+
+
+
+def billable_seconds(seconds, answered=True):
+    """30s iniciais, incrementos de 6s; chamada não atendida não gera minutos."""
+    if not answered: return 0
+    sec=max(0,numeric(seconds))
+    return 30 if sec<=30 else 30+math.ceil((sec-30)/6)*6
+
+
+def reprice_attempts(frame, costs):
+    """Cenário demonstrativo: valor original é preservado; tarifas atuais recalculam visualizações."""
+    result=frame.copy()
+    if "attempt_cost_original" not in result:
+        result["attempt_cost_original"]=result["attempt_cost"]
+    rates={str(row["strategy_id"]):row for _,row in costs.iterrows()}
+    recalculated=[]
+    for _,row in result.iterrows():
+        rate=rates.get(str(row.get("strategy_id")))
+        duration=row.get("duration_sec",row.get("duration_seconds"))
+        if rate is None or duration is None or pd.isna(duration) or any(pd.isna(rate.get(k)) for k in COST_LABELS):
+            recalculated.append(numeric(row.get("attempt_cost")));continue
+        channel=str(row.get("channel",""))
+        planned=str(row.get("planned_channel",channel))
+        excluded=str(row.get("contact_result","")).lower() in ["excluded_after_success","technical_exclusion"]
+        answered=bool(numeric(row.get("answered_flag",0)))
+        minutes=billable_seconds(duration,answered)/60
+        success=rate.get(BRANDED_SUCCESS_FIELD,30)
+        success=30 if pd.isna(success) else min(100,max(0,numeric(success)))
+        branded=channel=="branded_call" or planned=="branded_call"
+        value=(numeric(rate["cost_branded_call"])*success/100 if branded else 0)
+        value+=numeric(row.get("template_sent_flag",0))*numeric(rate["cost_whatsapp_template"])
+        if channel=="whatsapp_call": value+=max(0,numeric(duration))/60*numeric(rate["cost_meta_minute"]) if answered else 0
+        if channel in ["traditional_call","branded_call"]:
+            key="cost_productive_minute" if numeric(duration)>=120 else "cost_unproductive_minute"
+            value+=minutes*numeric(rate[key])
+        recalculated.append(0 if excluded else round(value,6))
+    result["attempt_cost"]=recalculated
+    result["custo_num"]=recalculated
+    return result
+
+
+def allocate_demo(total, ids):
+    quotient,remainder=divmod(total,len(ids))
+    return {sid:quotient+(i<remainder) for i,sid in enumerate(ids)}
+
+
+def default_billing_profile(costs):
+    ids=list(dict.fromkeys(costs["strategy_id"].dropna().astype(str)))
+    if not ids: return pd.DataFrame()
+    unique=allocate_demo(10000,ids);productive=allocate_demo(1000,ids);unproductive=allocate_demo(3000,ids);optins=allocate_demo(6800,ids)
+    return pd.DataFrame([{"day":day,"strategy_id":sid,"unique_numbers":unique[sid],"attempts":unique[sid]*5,"contacted_numbers":productive[sid]+unproductive[sid],"productive_contacts":productive[sid],"unproductive_contacts":unproductive[sid],"productive_minutes":productive[sid]*4,"unproductive_minutes":unproductive[sid]*0.9,"optin_requests":optins[sid],"data_mode":"demo"} for day in range(1,32) for sid in ids])
+
+
+def monthly_demo_usage(profile, costs, day):
+    """Franquia global consumida cronologicamente; no dia de cruzamento, rateio proporcional."""
+    needed={"day","strategy_id","productive_minutes","unproductive_minutes","optin_requests"}
+    if profile.empty or not needed.issubset(profile.columns): profile=default_billing_profile(costs)
+    if profile.empty:
+        return {"minutes":0.,"productive_extra":0.,"unproductive_extra":0.,"productive_cost":0.,"unproductive_cost":0.,"optins":0,"optin_extra":0,"optin_cost":0.,"missing_rates":True}
+    rows=profile.copy()
+    for field in ["day","productive_minutes","unproductive_minutes","optin_requests"]:
+        rows[field]=pd.to_numeric(rows[field],errors="coerce").fillna(0).clip(lower=0)
+    rows=rows[rows["day"].between(1,day)]
+    rates={str(r["strategy_id"]):r for _,r in costs.iterrows()}
+    usage={"minutes":0.,"productive_extra":0.,"unproductive_extra":0.,"productive_cost":0.,"unproductive_cost":0.,"optins":0,"optin_extra":0,"optin_cost":0.,"missing_rates":False}
+    for _,daily in rows.groupby("day",sort=True):
+        total=float((daily["productive_minutes"]+daily["unproductive_minutes"]).sum())
+        free=max(0,50000-usage["minutes"])
+        factor=max(0,total-free)/total if total else 0
+        for _,r in daily.iterrows():
+            prod=float(r["productive_minutes"])*factor;improd=float(r["unproductive_minutes"])*factor
+            usage["productive_extra"]+=prod;usage["unproductive_extra"]+=improd
+            rate=rates.get(str(r["strategy_id"]))
+            if rate is None or any(pd.isna(rate.get(k)) for k in ["cost_productive_minute","cost_unproductive_minute"]):
+                usage["missing_rates"]=True
+            else:
+                usage["productive_cost"]+=prod*numeric(rate["cost_productive_minute"])
+                usage["unproductive_cost"]+=improd*numeric(rate["cost_unproductive_minute"])
+        daily_optins=float(daily["optin_requests"].sum())
+        optin_free=max(0,50000-usage["optins"])
+        optin_factor=max(0,daily_optins-optin_free)/daily_optins if daily_optins else 0
+        for _,r in daily.iterrows():
+            rate=rates.get(str(r["strategy_id"]))
+            tariff=rate.get(OPTIN_EXCESS_FIELD,0.05) if rate is not None else 0.05
+            tariff=0.05 if pd.isna(tariff) else numeric(tariff)
+            usage["optin_cost"]+=float(r["optin_requests"])*optin_factor*tariff
+        usage["minutes"]+=total
+        usage["optins"]+=int(daily_optins)
+    usage["optin_extra"]=max(0,usage["optins"]-50000)
+    return usage
+
+
+def allowance_bar(value, suffix):
+    scale=max(60000,value*1.08)
+    filled=min(100,value/scale*100);marker=50000/scale*100
+    color="#ee3585" if value>50000 else "#00cdb2"
+    return f'<div class="allowance-track"><i style="width:{filled:.2f}%;background:{color}"></i><span style="left:{marker:.2f}%"></span></div><div class="allowance-label"><span>{br(value,0)} {suffix}</span><span>Franquia: 50 mil</span></div>'
+
+
+def render_monthly_billing(profile,costs):
+    now=datetime.now(ZoneInfo("America/Sao_Paulo"))
+    usage=monthly_demo_usage(profile,costs,now.day)
+    total=usage["productive_cost"]+usage["unproductive_cost"]+usage["optin_cost"]
+    prod_cost="—" if usage["missing_rates"] else money(usage["productive_cost"])
+    improd_cost="—" if usage["missing_rates"] else money(usage["unproductive_cost"])
+    st.markdown("""<style>
+.billing-top{display:flex;justify-content:flex-end;margin:0 0 14px;}
+.billing-summary{width:min(590px,100%);padding:13px 16px;border:1px solid #205076;border-radius:12px;background:linear-gradient(135deg,#07213a,#03162a);font-size:12px;}
+.billing-header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;}.billing-header b{font-size:13px;}.billing-header small{color:#94b4db;}
+.billing-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;}.billing-item strong{display:block;font-size:11px;margin-bottom:7px;}.billing-item b{font-size:18px;display:block;white-space:nowrap;}.billing-item small{display:block;color:#a7bfdf;font-size:10px;margin-top:5px;}
+.allowance-track{position:relative;height:9px;background:#15385b;border-radius:5px;margin:9px 0;}.allowance-track i{display:block;height:100%;border-radius:5px;}.allowance-track>span{position:absolute;top:-4px;bottom:-4px;border-left:2px solid #f9f9fa;}.allowance-label{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#c8d8f3;}.billing-footer{border-top:1px solid #1d3c5c;padding-top:8px;margin-top:12px;font-size:10px;color:#a7bfdf;}.billing-footer b{color:#f9f9fa;font-size:12px;}
+@media(max-width:560px){.billing-summary{padding:12px;}.billing-grid{gap:12px;}.billing-item b{font-size:16px;}}
+</style>""",unsafe_allow_html=True)
+    total_label="—" if usage["missing_rates"] else money(total)
+    body=f'<div class="cockpit billing-top"><aside class="billing-summary"><div class="billing-header"><b>Uso mensal Conecta+ <span class="tag">Demonstração</span></b><small>{now.strftime("%d/%m/%Y")} · mês atual</small></div><div class="billing-grid"><div class="billing-item"><strong>Telefonia · minutos consumidos</strong>{allowance_bar(usage["minutes"],"min")}</div><div class="billing-item"><strong>Consentimentos · disparos</strong>{allowance_bar(usage["optins"],"disparos")}<small>{br(usage["optin_extra"])} adicionais · {money(usage["optin_cost"])} · tarifa cadastrada</small></div><div class="billing-item"><strong>Minutos produtivos adicionais</strong><b>{br(usage["productive_extra"],1)} min · {prod_cost}</b></div><div class="billing-item"><strong>Minutos improdutivos adicionais</strong><b>{br(usage["unproductive_extra"],1)} min · {improd_cost}</b></div></div><div class="billing-footer">Adicionais simulados: <b>{total_label}</b> · Todas as estratégias · Sem mensalidade, Meta, Hiya e templates de terceiros. Franquia global abatida por dia; rateio proporcional no dia de esgotamento. Valores demonstrativos, sem efeito na fatura real.</div></aside></div>'
+    st.markdown(body,unsafe_allow_html=True)
+    return usage
 
 
 def outcome_frames(df):
@@ -417,7 +554,7 @@ def build_ai_context(df, strategies, steps, selected, start, end):
         "filtros":{"estrategia":selected,"inicio":str(start.date()) if start is not None else "todo o período","fim":str(end.date()) if end is not None else "todo o período"},
         "kpis_dashboard":totals(df),"kpis_registros_executaveis":totals(executed),
         "registros":len(df),"tentativas_executaveis":len(executed),"registros_excluidos":int(excluded.sum()),
-        "regras":{"classificacao":"por pessoa, produtivo > improdutivo > sem contato","dados":"agregados, sem telefone ou ID individual","custos":"valores históricos das tentativas; mudar parâmetros não recalcula histórico","causalidade":"comparação observacional; públicos podem diferir"},
+        "regras":{"classificacao":"por pessoa, produtivo > improdutivo > sem contato","dados":"agregados, sem telefone ou ID individual","custos":"cenários pelas tarifas atuais e sucesso estimado de impressões; valores de origem preservados","causalidade":"comparação observacional; públicos podem diferir"},
         "por_estrategia":grouped(["strategy_name"]),"por_canal":grouped(["channel"]),
         "por_canal_horario":grouped(["channel","hour"]),"por_retry":grouped(["retry_count"]),
         "contatos_primeiro_sucesso_por_retry":{str(k):int(v) for k,v in retry_success.items()},
@@ -618,7 +755,7 @@ limites de tentativas, cadências ou parâmetros do discador. Isso cabe à equip
 Telefone tocando sem resposta não prova recusa, bloqueio, desinteresse ou número inválido.
 WhatsApp texto só existe como resposta ao pedido de autorização para WhatsApp Call, nunca como ação independente.
 Pessoas e tentativas são métricas diferentes; não some pessoas entre canais. Resultado produtivo não prova venda.
-Custos são históricos; alterar tarifas não recalcula o passado. Registros excluídos não são tentativas executadas.
+Custos demonstrativos são recalculados pelas tarifas atuais; origem preservada. Cadência de bilhetagem 30/6 é um conceito financeiro permitido; não recomende cadência de rediscagem. Registros excluídos não são tentativas executadas.
 Compare grupos como observação, sem causalidade. Não exponha campos de banco, códigos ou termos técnicos.
 Dê até 3 recomendações com evidência numérica disponível. Confiança: alta, média ou baixa.
 Linha do tempo: testes e validações em 7, 14 e 30 dias; ganhos futuros não estimados.
@@ -773,7 +910,7 @@ def groq_request(messages, structured=True, output_limit=3000):
 
 def compact_ai_context(context, prompt, minimal=False):
     """Preserva KPIs e filtros; seleciona detalhes por volume, sem somar pessoas entre grupos."""
-    core = ["filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin","comparacao_periodos","conhecimento_do_dashboard"]
+    core = ["controle_mensal_demo","filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin","comparacao_periodos","conhecimento_do_dashboard"]
     summary = {k:context[k] for k in core if k in context}
     premises = ["Mantive o período e a estratégia selecionados, com os indicadores completos. Comparações indicam padrões, sem comprovar causa ou ganho futuro."]
     summary["estrategias"] = [{k:row[k] for k in ["nome","objetivo","acoes"] if k in row} for row in context.get("estrategias",[])][:8]
@@ -810,7 +947,7 @@ def compact_ai_context(context, prompt, minimal=False):
     if minimal or omitted:
         premises.append("A análise usa uma síntese dos detalhes, preservando os totais do dashboard e o recorte escolhido.")
     if minimal:
-        summary = {k:v for k,v in summary.items() if k in ["filtros","kpis_dashboard","comparacao_periodos","conhecimento_do_dashboard"]}
+        summary = {k:v for k,v in summary.items() if k in ["controle_mensal_demo","filtros","kpis_dashboard","comparacao_periodos","conhecimento_do_dashboard"]}
         knowledge=summary.get("conhecimento_do_dashboard",{})
         # Preserva assunto e premissas essenciais; no máximo dois turnos resumidos.
         if "conversa_anterior" in knowledge:
@@ -822,7 +959,7 @@ def compact_ai_context(context, prompt, minimal=False):
 
 DASHBOARD_KNOWLEDGE = {
     "indicadores": "Números únicos contam pessoas distintas no recorte. Cada pessoa pertence a um único grupo: se houve qualquer resultado produtivo, fica em produtivos; senão, se houve improdutivo, fica em improdutivos; senão, sem contato. Contactados = produtivos + improdutivos. Percentuais usam os números únicos como denominador. Classificação vem dos indicadores registrados, não é inferida da duração. Produtivo não significa venda ou pagamento.",
-    "custos": "Custo total soma os custos de todas as tentativas no recorte, inclusive repetições; custo por contato efetivo = custo total dividido pelos números únicos produtivos. Sem produtivos, esse custo não é calculável. Valores são históricos registrados por tentativa. Editar tarifas na configuração não recalcula o histórico. Cinco parâmetros: chamada identificada, template WhatsApp e minutos Meta, produtivos e improdutivos. Alterar preços só altera parâmetros na planilha.",
+    "custos": "Custos do mockup são cenários estimados com tarifas atuais, recalculados quando o usuário altera preços ou sucesso das impressões. Valor original permanece na planilha. Tradicional e branded atendidos: segundos faturados = 30 se duração ≤30; depois 30+6×arredondarParaCima((duração-30)/6). Sem atendimento não gera minuto; caixa postal atendida pode gerar. Tarifa produtiva por duração ≥120 s, improdutiva <120 s; isso não reclassifica o resultado do contato. Branded: preço por impressão × sucesso percentual (padrão30%) por tentativa identificada; não acrescentar esse custo a outras ações. WhatsApp: minutos da duração × preço Meta; template só quando enviado. Custo por contato produtivo/improdutivo divide custo total por pessoas no resultado, sem denominador zero. Quadro mensal: demonstração global de 50mil minutos tradicionais e 50mil opt-ins, fora dos filtros. Consumo até o dia atual de São Paulo. Só excedentes cobrados; minutos excedentes rateados proporcionalmente entre classes/estratégias no dia de esgotamento e precificados pela tarifa da estratégia. Opt-in excedente usa a tarifa definida para os disparos adicionais; Meta/Hiya/templates externos e mensalidade não entram. Não representa uma fatura real.",
     "comparacao": "Período anterior é o intervalo imediatamente precedente de igual duração, com ambas as datas incluídas e a mesma estratégia. Variação = (atual/anterior - 1) × 100. Sem registros anteriores ou denominador zero, não há variação percentual exibida. Base incompleta não permite concluir crescimento operacional real.",
     "filtros": "Período inicial: 01–30/08/2026, editável. Estratégia controla KPIs, detalhes dos KPIs e IA; Todas consolida estratégias. A seleção de uma linha na tabela Visão por Estratégia controla somente os painéis inferiores. Ao selecionar uma estratégia no filtro principal, o detalhamento acompanha. IA recebe dados do filtro principal, não do detalhamento.",
     "graficos": "Gráficos de resultados atribuem cada pessoa à primeira ocorrência do seu resultado final dentro do período selecionado. Pontos somam o KPI. Linhas de canais contam tentativas das pessoas daquele resultado, não pessoas distintas; texto só aparece como fluxo associado. Custo total temporal é acumulado; custo por contato efetivo temporal divide custos do intervalo pelos primeiros resultados produtivos daquele intervalo. Semanas começam segunda-feira; meses e semanas extremos podem ser parciais.",
@@ -836,7 +973,7 @@ DASHBOARD_KNOWLEDGE = {
 
 # Conhecimento curado da proposta: nenhum valor comercial é armazenado aqui.
 PRODUCT_KNOWLEDGE = {
- "conceitos": "Conecta+ complementa discador, PABX, URA, CRM e contact center existentes, combinando telefonia tradicional, WhatsApp Business Calling, consentimento e identificação. Na proposta, chamada produtiva para bilhetagem tem duração igual ou superior a 2 minutos; improdutiva tem menos de 2 minutos. Isso não comprova venda ou sucesso comercial. No dashboard o resultado é determinado pelos indicadores de resultado registrados, com prioridade produtivo sobre improdutivo; não reclassifique o histórico pela duração. Caixa postal pode ser atendimento para bilhetagem sem contato humano efetivo. Telefonia tradicional usa cadência 30/6 a partir do atendimento.",
+ "conceitos": "Conecta+ complementa discador, PABX, URA, CRM e contact center existentes, combinando telefonia tradicional, WhatsApp Business Calling, consentimento e identificação. Na proposta, chamada produtiva para bilhetagem tem duração igual ou superior a 2 minutos; improdutiva tem menos de 2 minutos. Isso não comprova venda ou sucesso comercial. No dashboard o resultado é determinado pelos indicadores de resultado registrados, com prioridade produtivo sobre improdutivo; não reclassifique o histórico pela duração. Caixa postal pode ser atendimento para bilhetagem sem contato humano efetivo. Telefonia tradicional usa cadência 30/6 a partir do atendimento: até 30 segundos cobra meio minuto; depois arredonda para o próximo bloco de 6 segundos. Não é intervalo de rediscagem.",
  "franquias": "Escopo padrão do material, sujeito ao contrato do cliente: até 100 canais SIP, até 30 canais WhatsApp Business Calling, 50.000 minutos mensais de telefonia tradicional outbound Brasil, 50.000 requisições mensais de opt-in e 50.000 requisições mensais de chamadas verificadas via push. Inclui AMD 2.0, estratégias de identificação, Smart Connect, relatórios, suporte Break & Fix 7x24 e Customer Success consultivo. Push depende de API e aplicativo do cliente. Não confundir canais simultâneos com minutos ou requisições; franquias são mensais e não significam uso ilimitado.",
  "exclusoes": "Não incluídos: minutos WhatsApp Business Calling cobrados pela Meta, mensagens HSM da Meta e cobranças no Business Manager, contratação separada de Branded Calls Hiya, desenvolvimento no aplicativo do cliente, rede/equipamentos/links/VPN/SBC/firewalls, licenças de terceiros não especificadas, integrações e customizações não previstas, serviços presenciais e viagens. Novas configurações, APIs, integrações, dashboards customizados, campanhas, treinamentos adicionais e projetos evolutivos ficam fora do suporte padrão. Pode explicar inclusões e exclusões, nunca informar tarifas, preços ou valores comerciais; encaminhar ao responsável comercial da Nuveto.",
  "casos": "Casos de uso do material: vendas ativas e inside sales para aumentar conversas, conversão e velocidade do pipeline; bancos, financeiras e fintechs para reduzir desconfiança e rejeição de chamadas legítimas; cobrança e recuperação para aumentar contato útil; atendimento ativo e receptivo para integrar canais de voz; B2B outbound para recuperar conversas com decisores e produtividade de SDRs. Exemplos ilustrativos, não resultados prometidos: em vendas, comparar público e abordagem pelo contato efetivo; em cobrança, adequar mensagem ao perfil; em bancos, esclarecer identidade e motivo do contato; em B2B, testar horários e canais por perfil quando houver evidência. Número desconhecido e baixa taxa de atendimento podem indicar fricção, sem provar rejeição. Recomendações técnicas permanecem com a equipe Nuveto.",
@@ -850,11 +987,13 @@ def product_topics(prompt):
 
 def local_product_explanation(prompt):
     q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
-    if not re.search(r"o que|que e|significa|defin|explique|explica|diferenca|conceito|quais.*(?:inclu|franquia|cobert)|esta.*(?:inclu|cobert)",q):
+    if not re.search(r"o que|que e|como funciona|significa|defin|explique|explica|diferenca|conceito|quais.*(?:inclu|franquia|cobert)|esta.*(?:inclu|cobert)",q):
         return None
     # Perguntas de diagnóstico ou comparação precisam dos dados e da análise.
     if re.search(r"por que|porque|aument|diminu|melhor|pior|recomen|meus|minha|neste periodo",q): return None
-    if re.search(r"improdutiv|nao produtiv|produtiv",q):
+    if re.search(r"cadencia|30.?6|bilhet",q):
+        answer="**Bilhetagem 30/6**\n- A cobrança começa no atendimento, com um bloco mínimo de 30 segundos (0,5 minuto).\n- Depois, o tempo faturado cresce em blocos de 6 segundos.\n- Exemplos: 12 s → 30 s; 31 s → 36 s; 38 s → 42 s.\n- Uma tentativa sem atendimento não consome minutos. Caixa postal atendida pode consumir.\n- Essa regra financeira não é uma recomendação de intervalo entre tentativas."
+    elif re.search(r"improdutiv|nao produtiv|produtiv",q):
         answer="**No dashboard**\n- Contato produtivo: número com resultado marcado como produtivo nos dados. Não significa necessariamente venda.\n- Contato improdutivo: número com resultado marcado como improdutivo e sem resultado produtivo no período.\n- Se o mesmo número teve os dois resultados, ele conta apenas como produtivo. Números sem esses resultados ficam em não contactados.\n\n**Na proposta, para bilhetagem**\n- Chamada produtiva: duração igual ou superior a 2 minutos.\n- Chamada improdutiva: duração inferior a 2 minutos.\n- Essa classificação por duração é diferente do resultado do contato. Caixa postal pode gerar cobrança sem conversa humana."
     else:
         topics=product_topics(prompt)
@@ -944,7 +1083,7 @@ def run_ai_analysis(context, prompt):
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"product-ux-v6"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"billing-demo-v7"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -987,12 +1126,16 @@ def set_ai_prompt(value):
     st.session_state.ai_prompt=value
 
 
-def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
+def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing=None):
     if not st.session_state.get("ai_open"):
         return
     context=build_ai_context(df,strategies,steps,selected,start,end)
     if all_data is not None:
         context["comparacao_periodos"]=previous_period_context(all_data,selected,start,end)
+    if billing is not None:
+        context["controle_mensal_demo"]={k:v for k,v in billing.items() if not k.endswith("cost")}
+        context["controle_mensal_demo"]["data_referencia"]=datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y")
+        context["controle_mensal_demo"]["premissa"]="Demonstração independente dos filtros; acumulado até o dia atual; franquias globais de 50 mil minutos tradicionais e 50 mil opt-ins. Não é consumo real ou fatura real."
     fingerprint=hashlib.sha256(json.dumps(context,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     with st.sidebar:
         if st.button("Fechar IA ×",key="close_ai",use_container_width=True):
@@ -1261,7 +1404,7 @@ hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>|
 st.markdown(hero, unsafe_allow_html=True)
 try:
     with st.spinner("Carregando indicadores…"):
-        df_fact, df_strat, df_steps, df_costs, cost_connection_error = load_data()
+        df_fact, df_strat, df_steps, df_costs, cost_connection_error, billing_profile = load_data()
 except Exception as exc:
     st.error("Não foi possível carregar a planilha. Verifique o compartilhamento, as abas e a conexão.")
     with st.expander("Detalhes do carregamento"):
@@ -1368,7 +1511,7 @@ def strategy_preview(channels):
 
 
 def save_cost_parameters(strategy_id, values, expected):
-    """Grava somente cinco parâmetros, após comparar com a versão lida."""
+    """Grava tarifas e percentual, após comparar com a versão lida."""
     session, url = sheets_session()
     with session:
         result = session.get(url+"/"+quote("'cost_parameters'!A1:ZZ", safe=""), timeout=30)
@@ -1384,7 +1527,7 @@ def save_cost_parameters(strategy_id, values, expected):
             raise ValueError("A estratégia deve ter exatamente uma linha em cost_parameters.")
         row_number, row = matches[0]
         data = []
-        for field in COST_LABELS:
+        for field in values:
             if field not in headers:
                 raise ValueError(f"Parâmetro ausente na planilha: {field}")
             idx = headers.index(field)
@@ -1398,7 +1541,7 @@ def save_cost_parameters(strategy_id, values, expected):
                          "values":[[values[field]]]})
         result = session.post(url+":batchUpdate",json={"valueInputOption":"RAW", "data":data},timeout=30)
         result.raise_for_status()
-        if result.json().get("totalUpdatedCells") != len(COST_LABELS):
+        if result.json().get("totalUpdatedCells") != len(values):
             raise ValueError("A planilha não confirmou a atualização completa. Verifique os parâmetros.")
 
 
@@ -1572,20 +1715,36 @@ if st.session_state.costs_open:
             edit_id = df_strat.loc[df_strat["strategy_name"].eq(edit_strategy),"strategy_id"].iloc[0]
             cost_rows = df_costs[df_costs["strategy_id"].eq(edit_id)]
             if len(cost_rows) != 1 or any(field not in df_costs for field in COST_LABELS):
-                st.error("Cadastre os cinco parâmetros e uma única linha desta estratégia em cost_parameters.")
+                st.error("Cadastre as tarifas e uma única linha desta estratégia em cost_parameters.")
             else:
                 source = cost_rows.iloc[0]
                 expected = {field:numeric(source[field]) for field in COST_LABELS}
+                expected[BRANDED_SUCCESS_FIELD]=30.0 if pd.isna(source.get(BRANDED_SUCCESS_FIELD)) else numeric(source[BRANDED_SUCCESS_FIELD])
+                expected[OPTIN_EXCESS_FIELD]=0.05 if pd.isna(source.get(OPTIN_EXCESS_FIELD)) else numeric(source[OPTIN_EXCESS_FIELD])
                 with st.form("cost_parameters_form"):
-                    values = {field:st.number_input(label,min_value=0.0,value=expected[field],step=0.01,format="%.4f",key=f"cost_{edit_id}_{field}_{expected[field]}") for field,label in COST_LABELS.items()}
+                    values={}
+                    for field,label in COST_LABELS.items():
+                        values[field]=st.number_input(label,min_value=0.0,value=expected[field],step=0.01,format="%.4f",key=f"cost_{edit_id}_{field}_{expected[field]}")
+                        if field=="cost_branded_call":
+                            values[BRANDED_SUCCESS_FIELD]=st.number_input("Sucesso nas impressões da marca (%)",min_value=0.0,max_value=100.0,value=min(100.,max(0.,expected[BRANDED_SUCCESS_FIELD])),step=1.0,format="%.1f",key=f"branded_pct_{edit_id}_{expected[BRANDED_SUCCESS_FIELD]}")
+                            st.caption("Padrão: 30%. A exibição do logo depende da compatibilidade do aparelho e da rede. Custo estimado = tentativas identificadas × taxa de exibição × preço por impressão.")
+                        if field in ["cost_productive_minute","cost_unproductive_minute"]:
+                            st.caption("Cadência 30/6: chamada atendida até 30 s cobra 30 s (0,5 min); depois, blocos de 6 s. Para bilhetagem: produtiva ≥ 2 min; improdutiva < 2 min.")
+                    st.markdown("**Adicional Nuveto após a franquia mensal**")
+                    values[OPTIN_EXCESS_FIELD]=st.number_input("Disparo de consentimento adicional (R$/disparo)",min_value=0.,value=expected[OPTIN_EXCESS_FIELD],step=0.01,format="%.4f",key=f"optin_excess_{edit_id}_{expected[OPTIN_EXCESS_FIELD]}")
+                    st.caption("Padrão R$ 0,05. Só os disparos acima da franquia global de 50.000 entram no quadro Nuveto. O template Meta é um custo separado.")
                     submit = st.form_submit_button("Atualizar custos",use_container_width=True)
-                st.caption("A atualização vale para esta estratégia. Os custos históricos das tentativas são preservados.")
+                st.caption("A atualização recalcula os custos demonstrativos desta estratégia e os adicionais simulados da plataforma. Os valores de origem permanecem preservados na planilha.")
+                if any(k not in df_costs for k in [BRANDED_SUCCESS_FIELD,OPTIN_EXCESS_FIELD]):
+                    st.info("Execute prepararControleConecta no Apps Script para cadastrar o percentual e a tarifa de disparos adicionais antes de salvar.")
                 if not writer_configured():
                     st.info("A gravação na planilha ainda precisa ser conectada.")
                     with st.expander("Como habilitar a gravação"):
                         st.markdown("Adicione `google-auth` ao requirements.txt. Habilite a Google Sheets API, compartilhe a planilha como Editor com uma conta de serviço e adicione a chave dessa conta em Settings → Secrets, na seção `[gcp_service_account]`. Não publique a chave no GitHub.")
                 if submit:
-                    if not writer_configured():
+                    if any(k not in df_costs for k in [BRANDED_SUCCESS_FIELD,OPTIN_EXCESS_FIELD]):
+                        st.error("Execute primeiro prepararControleConecta na planilha.")
+                    elif not writer_configured():
                         st.error("Configure o acesso ao Google Sheets antes de atualizar custos.")
                     else:
                         try:
@@ -1614,6 +1773,8 @@ if df_fact.empty:
     st.info("A aba dashboard_fact ainda não contém tentativas.")
     st.stop()
 
+df_fact=reprice_attempts(df_fact,df_costs)
+
 # Metadados atuais prevalecem sobre os nomes históricos das tentativas.
 if "strategy_id" in df_fact:
     name_map = df_strat.set_index("strategy_id")["strategy_name"]
@@ -1639,7 +1800,7 @@ if detail_name not in names: detail_name=names[0]
 
 period_df = df_fact if date_start is None else df_fact[df_fact["_date"].between(date_start, date_end)]
 filtered = period_df if selected == "Todas" else period_df[period_df["strategy_name"].eq(selected)]
-render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end,all_data=df_fact)
+render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end,all_data=df_fact,billing=monthly_demo_usage(billing_profile,df_costs,datetime.now(ZoneInfo("America/Sao_Paulo")).day))
 detail = period_df[period_df["strategy_name"].eq(detail_name)]
 current = funnel_metrics(filtered)
 previous = None
@@ -1670,6 +1831,8 @@ for i, (label, kind, color) in enumerate(zip(labels, ["users", "off", "phone", "
         desc = "vs. "+(date_start-pd.Timedelta(days=days)).strftime("%d/%m")+" a "+(date_start-pd.Timedelta(days=1)).strftime("%d/%m")
     trend = spark([row[i] for row in daily], color, f"spark-{i}")
     kpi_html.append(f'<article class="kpi"><div class="kpi-head">{icon(kind,color)}<div><div class="kpi-label">{label}</div><div class="kpi-value" style="--kpi-size:{100/(max(1,len(value))*0.65):.2f}cqw">{value}</div></div></div><div class="kpi-foot"><div><div class="delta" style="color:{delta_color}">{delta or "&nbsp;"}</div><div class="sub">{desc}</div></div>{trend}</div></article>')
+
+monthly_usage=render_monthly_billing(billing_profile,df_costs)
 
 # O botão transparente cobre o card inteiro e preserva acesso por teclado.
 st.markdown("""<style>
@@ -1764,7 +1927,7 @@ settings = []
 short_labels = ["Chamada identificada", "Mensagem de consentimento", "Minuto WhatsApp (Meta)", "Minuto produtivo", "Minuto improdutivo"]
 for (field, _), label in zip(COST_LABELS.items(), short_labels):
     tariff = cost_record.get(field)
-    settings.append(f'<div><small>{label}</small><b>{money(numeric(tariff)) if tariff is not None and pd.notna(tariff) else "—"}</b></div>')
+    settings.append(f'<div><small>{label}</small><b>{money(numeric(tariff)) if tariff is not None and pd.notna(tariff) else "—"}</b>'+(f'<small>Exibição estimada: {br(numeric(cost_record.get(BRANDED_SUCCESS_FIELD,30)),1)}%</small>' if field=="cost_branded_call" else "")+'</div>')
 ani = next((record[c] for c in ["ani", "caller_id", "bina"] if c in record and pd.notna(record[c])), "Não informado")
 dependency_note = '<div class="funnel-note">WhatsApp Call: opt-in quando não houver consentimento. Se houver resposta por texto, o bot esclarece o motivo e agenda contato no canal preferido.</div>' if not steps.empty and steps["channel"].eq("whatsapp_call").any() else ""
 config_body = f'<div class="panel-body"><div class="config-head"><h3>{esc(detail_name)}</h3><div class="meta"><div><small>ANI</small>{esc(ani)}</div><div><small>Objetivo central</small>{esc(record.get("objective","—"))}</div></div></div><div class="sequence-label">Sequência de abordagem</div>{flow_html}{dependency_note}<div class="sequence-label">Custos configurados da estratégia</div><div class="cost-settings">{"".join(settings)}</div></div>'
