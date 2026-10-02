@@ -1634,55 +1634,71 @@ def action_attempt_history(group,source,end=None):
     return history.sort_values(["contact_id",sort],kind="stable") if sort else history.sort_values("contact_id",kind="stable")
 
 
+def select_action_detail(action):
+    st.session_state["nba_selected_action"]=action
+
+
+def close_action_detail():
+    st.session_state.pop("nba_selected_action",None)
+
+
 def render_non_contact_actions(current,selected,classified,clusters,all_data=None,end=None):
     if classified.empty:return
     counts=classified["recommended_action"].value_counts();total=len(classified)
-    rows=[]
-    for key,n in counts.items():
-        title,diagnosis,action,color=ACTION_INFO[key];pct=n/total*100
-        rows.append(f'<article class="action-row"><div class="action-row-title"><i style="background:{color}"></i><b>{esc(title)}</b><span>{br(n)} números · {br(pct,1)}%</span></div><div class="action-meter"><i style="width:{pct:.2f}%;background:{color}"></i></div><p>{esc(action)}</p></article>')
     st.markdown("""<style>
-.nba-layout{display:grid;grid-template-columns:1.25fr 1fr;gap:24px;padding:18px;}.action-row{margin-bottom:16px;}.action-row-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;}.action-row-title>i{width:8px;height:8px;border-radius:50%;}.action-row-title span{margin-left:auto;font-size:11px;color:#bfd2ea;}.action-meter{height:7px;border-radius:5px;background:#123454;margin:8px 0;overflow:hidden;}.action-meter>i{display:block;height:100%;border-radius:5px;}.action-row p{font-size:11px;color:#afc8e4;line-height:1.5;}.nba-read h3{font-size:15px;margin:0 0 12px;}.nba-read p,.nba-read li{font-size:12px;line-height:1.55;color:#bfd2ea;}.nba-read ul{padding-left:16px;}.nba-read li{margin-bottom:10px;}.nba-foot{font-size:10px;line-height:1.55;color:#96b3d3;border-top:1px solid #1b4269;margin-top:14px;padding-top:10px;}@media(max-width:850px){.nba-layout{grid-template-columns:1fr;gap:16px;}}
+.st-key-nba_section{background:linear-gradient(120deg,#061c34,#08172d);border:1px solid #204267;border-radius:16px;padding:22px;margin-top:18px;}
+.nba-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:6px;}.nba-heading h3{color:#f3f7ff;font-size:21px;margin:0;}.nba-heading span{font-size:12px;color:#afc5e1;white-space:nowrap;}.nba-subtitle{color:#abc2df;font-size:13px;margin:0 0 16px;}
+.st-key-nba_cards [data-testid="stHorizontalBlock"]{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px!important;align-items:stretch;}
+.st-key-nba_cards [data-testid="stColumn"]{width:100%!important;min-width:0!important;flex:initial!important;}
+.st-key-nba_cards [class*="st-key-nba_card_"]{position:relative!important;isolation:isolate;height:100%;}
+.nba-card{min-height:218px;height:100%;background:#0b2540;border:1px solid #24486c;border-radius:13px;padding:18px;box-sizing:border-box;transition:background .15s,border-color .15s;}
+.nba-card.active{background:linear-gradient(120deg,#113756,#142649);border-color:var(--accent);box-shadow:inset 3px 0 var(--accent);}
+.nba-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}.nba-card-title{font-size:16px;font-weight:650;color:#f1f6ff;line-height:1.35;max-width:75%;}.nba-card-count{font-size:29px;color:var(--accent);line-height:1;font-weight:750;white-space:nowrap;}.nba-card-meta{display:flex;gap:10px;align-items:center;margin:12px 0 9px;color:#aec5e0;font-size:11px;}.nba-strength{border-radius:20px;padding:3px 8px;background:#173b59;color:#d2e2f6;}.nba-meter{height:5px;border-radius:6px;overflow:hidden;background:#173b59;}.nba-meter i{display:block;height:100%;background:var(--accent);border-radius:6px;}.nba-card p{font-size:12px;color:#ccdaed;line-height:1.55;margin:12px 0;}.nba-card-link{font-size:11px;font-weight:600;color:var(--accent);}
+.st-key-nba_cards [class*="st-key-nba_card_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]),.st-key-nba_cards [class*="st-key-nba_card_"] .element-container:has([data-testid="stButton"]){position:absolute!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;z-index:3;}
+.st-key-nba_cards [data-testid="stButton"]{height:100%!important;width:100%!important;}
+.st-key-nba_cards [data-testid="stButton"] button{height:100%!important;width:100%!important;background:transparent!important;color:transparent!important;border:0!important;box-shadow:none!important;border-radius:13px!important;}
+.st-key-nba_cards [data-testid="stButton"] button p{color:transparent!important;}
+.st-key-nba_cards [class*="st-key-nba_card_"]:hover .nba-card{background:#10324f;border-color:#4487bf;}
+.st-key-nba_cards [data-testid="stButton"] button:focus-visible{outline:2px solid #77b8ff!important;outline-offset:3px;}
+.nba-alert{padding:14px 16px;border:1px solid #3d426c;border-radius:10px;background:#151f3c;color:#cdd9ed;font-size:12px;line-height:1.6;}
+.st-key-nba_detail{border:1px solid #31587f;border-radius:13px;padding:18px;background:#071e36;margin-top:14px;}
+@media(max-width:700px){.st-key-nba_cards [data-testid="stHorizontalBlock"]{grid-template-columns:1fr;}.st-key-nba_section{padding:14px;}.nba-heading{align-items:flex-start;flex-direction:column;gap:6px;}.nba-card{min-height:195px;}}
 </style>""",unsafe_allow_html=True)
-    insights=[]
-    strong=int(classified["has_proof_of_valid_number"].sum());unconfirmed=int(classified["branded_unconfirmed_count"].gt(0).sum())
-    insights.append(f'<b>{br(strong)} números têm sinal de validade.</b> Entrega ou interação pode superar várias falhas anteriores; isso não comprova interesse na oferta.')
-    if unconfirmed:insights.append(f'<b>{br(unconfirmed)} números tiveram branded sem confirmação do logo.</b> Não classificar como baixa resposta a uma identificação comprovada usando apenas o percentual estimado de impressões.')
-    prior_success=int(classified["recommended_action"].eq("STOP_AFTER_SUCCESS").sum())
-    if prior_success:insights.append(f'<b>{br(prior_success)} têm sucesso ou encerramento no histórico.</b> Estão sem contato no recorte atual, mas o sucesso anterior prevalece na próxima ação.')
-    for cluster in clusters:insights.append(f'<b>Concentração em {esc(cluster["grupo"])}:</b> {br(cluster["indisponibilidade_pct"],1)}% de {br(cluster["registros"])} registros de {br(cluster["numeros"])} números tiveram indisponibilidade ou condição técnica, versus {br(cluster["base_pct"],1)}% no filtro. Sinal para avaliação Nuveto; não confirma uma falha de infraestrutura.')
-    if not clusters:insights.append("Não foi encontrada concentração de indisponibilidade que atendesse aos critérios mínimos nos campos disponíveis. Isso não comprova ausência de problemas.")
-    st.markdown('<div class="cockpit">'+panel("Não contactados · próximas ações",'<p style="padding:14px;font-size:13px">'+br(total)+' números · clique na classificação para conferir o histórico que sustenta a ação.</p>','<span class="tag">'+esc(selected)+'</span>',"nc-panel")+'</div>',unsafe_allow_html=True)
-    left,right=st.columns([1.25,1],gap="large")
-    with left:
-        for key,n in counts.items():
-            title,diagnosis,action,color=ACTION_INFO[key];group=classified[classified["recommended_action"].eq(key)]
-            level="Forte" if group["confidence"].eq("alta").mean()>=.5 else "Moderado" if group["confidence"].isin(["alta","média"]).any() else "Inicial"
-            if st.button(title+" · "+br(n)+" números",key="nba_action_"+key,use_container_width=True,help="Abrir as tentativas deste grupo"):
-                st.session_state["nba_selected_action"]=key
-            pct=n/total*100
-            st.markdown(f'<div class="action-meter"><i style="width:{pct:.2f}%;background:{color}"></i></div><p style="font-size:12px;color:#bfd2ea">{br(pct,1)}% do grupo · Indício {level.lower()}<br>{esc(action)}</p>',unsafe_allow_html=True)
-    with right:
-        st.markdown('<div class="nba-read"><h3>Evidências por trás das ações</h3>',unsafe_allow_html=True)
-        for key,n in counts.items():
-            group=classified[classified["recommended_action"].eq(key)]
-            sample=group["recommendation_reason"].value_counts().index[0]
-            st.markdown("**"+ACTION_INFO[key][0]+"** — Exemplo do histórico: "+str(sample))
+    with st.container(key="nba_section"):
+        st.markdown('<div class="nba-heading"><h3>Não contactados · próximas ações</h3><span>'+br(total)+' números únicos · '+esc(selected)+'</span></div><p class="nba-subtitle">Selecione uma ação para ver os números e as tentativas que sustentam o diagnóstico.</p>',unsafe_allow_html=True)
+        with st.container(key="nba_cards"):
+            columns=st.columns(len(counts))
+            for column,(key,n) in zip(columns,counts.items()):
+                title,diagnosis,action,color=ACTION_INFO[key];group=classified[classified["recommended_action"].eq(key)]
+                level="Forte" if group["confidence"].eq("alta").mean()>=.5 else "Moderado" if group["confidence"].isin(["alta","média"]).any() else "Inicial"
+                pct=n/total*100;active=st.session_state.get("nba_selected_action")==key
+                with column:
+                    with st.container(key="nba_card_"+key):
+                        card=f'<article class="nba-card {"active" if active else ""}" style="--accent:{color}"><div class="nba-card-top"><div class="nba-card-title">{esc(title)}</div><div class="nba-card-count">{br(n)}</div></div><div class="nba-card-meta"><span>{br(pct,1)}% dos números</span><span class="nba-strength">Indício {level.lower()}</span></div><div class="nba-meter"><i style="width:{pct:.2f}%"></i></div><p>{esc(action)}</p><span class="nba-card-link">{"Detalhes abertos" if active else "Ver tentativas"} →</span></article>'
+                        st.markdown(card,unsafe_allow_html=True)
+                        st.button("Ver tentativas: "+title,key="nba_action_"+key,on_click=select_action_detail,args=(key,),use_container_width=True,help="Abrir histórico: "+title)
         for cluster in clusters:
-            st.markdown("**Alerta de conectividade — "+cluster["grupo"]+"**: "+br(cluster["indisponibilidade_pct"],1)+"% dos registros com indisponibilidade, contra "+br(cluster["base_pct"],1)+"% no filtro. Solicite investigação à Nuveto.")
-        st.caption("Indícios orientam testes e ações; não representam probabilidades estatísticas calibradas. Branded sem comprovação de impressão sustenta uma hipótese, não a certeza de que o cliente viu a marca.")
+            st.markdown('<div class="nba-alert"><b>Concentração de indisponibilidade · '+esc(cluster["grupo"])+'</b><br>'+br(cluster["indisponibilidade_pct"],1)+'% dos registros, contra '+br(cluster["base_pct"],1)+'% no filtro. Solicite investigação à Nuveto.</div>',unsafe_allow_html=True)
+        st.caption("A força do indício vem do histórico; não é uma probabilidade estatística. Quando a exibição da marca não foi confirmada, a recomendação de revisar a oferta permanece uma hipótese para testar.")
     chosen=st.session_state.get("nba_selected_action")
     if chosen in counts.index:
         group=classified[classified["recommended_action"].eq(chosen)]
         history=action_attempt_history(group,all_data if all_data is not None else current,end)
-        st.markdown("#### "+ACTION_INFO[chosen][0]+" · detalhamento")
-        st.caption(br(len(group))+" números únicos · "+br(len(history))+" registros no histórico até o fim do período, incluindo outras estratégias. Exclusões aparecem para auditoria e não são discagens efetivas.")
-        st.dataframe(group[["contact_id","recommendation_reason","confidence"]].rename(columns={"contact_id":"Número / contato","recommendation_reason":"Evidência para a ação","confidence":"Força do indício"}),hide_index=True,use_container_width=True)
-        details=analytic_attempts(history)
-        for field,label in [("contact_result","Resultado original"),("hangup_cause","Retorno da chamada"),("hang_cause","Retorno da chamada (origem)"),("ddd","DDD"),("destination_carrier","Operadora de destino"),("branded_impression_flag","Impressão da marca confirmada"),("logo_displayed_flag","Logo exibido")]:
-            if field in history:details[label]=history.loc[details.index,field]
-        st.dataframe(details,hide_index=True,use_container_width=True)
-        st.download_button("Baixar tentativas deste grupo",details.to_csv(index=False).encode("utf-8-sig"),file_name="tentativas_"+chosen.lower()+".csv",mime="text/csv",key="nba_export_attempts")
+        with st.container(key="nba_detail"):
+            heading,close=st.columns([4,1])
+            with heading:st.markdown("#### "+ACTION_INFO[chosen][0])
+            with close:st.button("✕ Ocultar detalhes",key="close_nba_detail",on_click=close_action_detail,use_container_width=True)
+            st.caption(br(len(group))+" números únicos · "+br(len(history))+" registros no histórico até o fim do período, incluindo outras estratégias.")
+            numbers_tab,attempts_tab=st.tabs(["Números e evidências","Histórico de tentativas"])
+            with numbers_tab:
+                st.dataframe(group[["contact_id","recommendation_reason","confidence"]].rename(columns={"contact_id":"Número / contato","recommendation_reason":"Evidência para a ação","confidence":"Força do indício"}),hide_index=True,use_container_width=True)
+            with attempts_tab:
+                details=analytic_attempts(history)
+                for field,label in [("contact_result","Resultado original"),("hangup_cause","Retorno da chamada"),("hang_cause","Retorno da chamada (origem)"),("ddd","DDD"),("destination_carrier","Operadora de destino"),("branded_impression_flag","Impressão da marca confirmada"),("logo_displayed_flag","Logo exibido")]:
+                    if field in history:details[label]=history.loc[details.index,field]
+                st.dataframe(details,hide_index=True,use_container_width=True)
+                st.caption("Exclusões aparecem para auditoria; não são discagens efetivas.")
+                st.download_button("Baixar tentativas deste grupo",details.to_csv(index=False).encode("utf-8-sig"),file_name="tentativas_"+chosen.lower()+".csv",mime="text/csv",key="nba_export_attempts")
     with st.expander("Conferir a classificação por número"):
         state_names={"VALID":"Evidência de número válido","PROBABLY_VALID":"Provavelmente válido","INVALID":"Indício forte de número inválido","UNKNOWN":"Não determinado"}
         view=classified.copy();view["number_state"]=view["number_state"].map(state_names);view["recommended_action"]=view["recommended_action"].map(lambda key:ACTION_INFO[key][0])
