@@ -622,7 +622,7 @@ Custos são históricos; alterar tarifas não recalcula o passado. Registros exc
 Compare grupos como observação, sem causalidade. Não exponha campos de banco, códigos ou termos técnicos.
 Dê até 3 recomendações com evidência numérica disponível. Confiança: alta, média ou baixa.
 Linha do tempo: testes e validações em 7, 14 e 30 dias; ganhos futuros não estimados.
-Retorne somente JSON com todos os campos do formato exigido. Frases curtas, sem HTML ou markdown.
+Retorne somente JSON com todos os campos do formato exigido. No resumo use 2–4 bullets Markdown separados por quebras de linha. Sem HTML. Nunca divulgue preços comerciais do Conecta+, Meta ou Hiya; encaminhe perguntas de preço ao responsável comercial da Nuveto. Custos históricos do dashboard podem ser analisados. Distinga classificação por duração para bilhetagem de resultado de negócio.
 """
 
 
@@ -814,13 +814,37 @@ DASHBOARD_KNOWLEDGE = {
     "indicadores": "Números únicos contam pessoas distintas no recorte. Cada pessoa pertence a um único grupo: se houve qualquer resultado produtivo, fica em produtivos; senão, se houve improdutivo, fica em improdutivos; senão, sem contato. Contactados = produtivos + improdutivos. Percentuais usam os números únicos como denominador. Classificação vem dos indicadores registrados, não é inferida da duração. Produtivo não significa venda ou pagamento.",
     "custos": "Custo total soma os custos de todas as tentativas no recorte, inclusive repetições; custo por contato efetivo = custo total dividido pelos números únicos produtivos. Sem produtivos, esse custo não é calculável. Valores são históricos registrados por tentativa. Editar tarifas na configuração não recalcula o histórico. Cinco parâmetros: chamada identificada, template WhatsApp e minutos Meta, produtivos e improdutivos. Alterar preços só altera parâmetros na planilha.",
     "comparacao": "Período anterior é o intervalo imediatamente precedente de igual duração, com ambas as datas incluídas e a mesma estratégia. Variação = (atual/anterior - 1) × 100. Sem registros anteriores ou denominador zero, não há variação percentual exibida. Base incompleta não permite concluir crescimento operacional real.",
-    "filtros": "Período inicial: 01–30/08/2026, editável. Estratégia controla KPIs, detalhes dos KPIs e IA; Todas consolida estratégias. Detalhar estratégia controla somente os painéis inferiores. Ao selecionar uma estratégia no filtro principal, o detalhamento acompanha. IA recebe dados do filtro principal, não do detalhamento.",
+    "filtros": "Período inicial: 01–30/08/2026, editável. Estratégia controla KPIs, detalhes dos KPIs e IA; Todas consolida estratégias. A seleção de uma linha na tabela Visão por Estratégia controla somente os painéis inferiores. Ao selecionar uma estratégia no filtro principal, o detalhamento acompanha. IA recebe dados do filtro principal, não do detalhamento.",
     "graficos": "Gráficos de resultados atribuem cada pessoa à primeira ocorrência do seu resultado final dentro do período selecionado. Pontos somam o KPI. Linhas de canais contam tentativas das pessoas daquele resultado, não pessoas distintas; texto só aparece como fluxo associado. Custo total temporal é acumulado; custo por contato efetivo temporal divide custos do intervalo pelos primeiros resultados produtivos daquele intervalo. Semanas começam segunda-feira; meses e semanas extremos podem ser parciais.",
     "whatsapp": "Ações configuráveis: Telefonia Tradicional, Branded Call e WhatsApp Call. WhatsApp texto nunca é primeira ação ou etapa independente: só ocorre quando a pessoa responde por texto ao pedido de autorização para WhatsApp Call. O bot esclarece a intenção e busca agendar no canal preferido. Envio de autorização não é contato produtivo nem consentimento; chamar pelo WhatsApp exige autorização.",
     "dados": "Fonte do dashboard: dashboard_fact, uma linha por tentativa. interaction_attempt guarda tentativas de origem; strategy e strategy_steps definem estratégias; cost_parameters guarda tarifas. Atualizar uma aba não sincroniza automaticamente as outras. Dados são fictícios; agosto foi gerado com 500 pessoas, 2.500 tentativas, 200 contactados (150 improdutivos e 50 produtivos) e 300 sem contato no mês completo 01–30/08/2026. Grupos contactados são divisões, não etapas sequenciais. Recortes menores e estratégias variam. Custos de agosto usam parâmetros atuais e cobrança simulada 30/6 em chamadas atendidas; não comprovam tarifas reais de agosto. DDD/origem/segmento fictícios não provam correlações comerciais.",
     "campos": "Identificadores ligam pessoa, tentativa, chamada e estratégia; não são métricas. Canal realizado pode ser texto em fluxo de chamada planejada. Data/hora indica quando a tentativa ocorreu; contador de repetições começa em zero. Duração está em segundos. Indicadores de atendimento, produtivo, improdutivo e filtragem descrevem cada tentativa. Resultado do contato resume o desfecho; retorno SIP/Khomp descreve sinalização e exige dicionário validado, não prova recusa nem número inválido sozinho. Consentimento antes/depois e indicadores de template enviado, respondido e autorização gerada descrevem a jornada WhatsApp. ANI é identificação de origem. Ação do analisador é interpretação registrada, não recomendação de negócio.",
     "premissas": "IA usa resumos agregados, sem telefone ou ID individual. Registros excluídos após sucesso ou por exclusão técnica ficam fora da comparação de tentativas executáveis; KPI considera o recorte completo. Não somar pessoas de grupos sobrepostos. Evidência observacional não prova causalidade. Não inventar recusa, validade, conversão ou ganho futuro. Recomendações só de negócio; ajustes técnicos ficam com Nuveto. Linha do tempo é teste em 7, 14 e 30 dias, sem previsão numérica. Cache dura uma hora na mesma sessão e só reutiliza mesma pergunta e dados.",
 }
+
+
+
+# Conhecimento curado da proposta: nenhum valor comercial é armazenado aqui.
+PRODUCT_KNOWLEDGE = {
+ "conceitos": "Conecta+ complementa discador, PABX, URA, CRM e contact center existentes, combinando telefonia tradicional, WhatsApp Business Calling, consentimento e identificação. Na proposta, chamada produtiva para bilhetagem tem duração igual ou superior a 2 minutos; improdutiva tem menos de 2 minutos. Isso não comprova venda ou sucesso comercial. No dashboard o resultado é determinado pelos indicadores de resultado registrados, com prioridade produtivo sobre improdutivo; não reclassifique o histórico pela duração. Caixa postal pode ser atendimento para bilhetagem sem contato humano efetivo. Telefonia tradicional usa cadência 30/6 a partir do atendimento.",
+ "franquias": "Escopo padrão do material, sujeito ao contrato do cliente: até 100 canais SIP, até 30 canais WhatsApp Business Calling, 50.000 minutos mensais de telefonia tradicional outbound Brasil, 50.000 requisições mensais de opt-in e 50.000 requisições mensais de chamadas verificadas via push. Inclui AMD 2.0, estratégias de identificação, Smart Connect, relatórios, suporte Break & Fix 7x24 e Customer Success consultivo. Push depende de API e aplicativo do cliente. Não confundir canais simultâneos com minutos ou requisições; franquias são mensais e não significam uso ilimitado.",
+ "exclusoes": "Não incluídos: minutos WhatsApp Business Calling cobrados pela Meta, mensagens HSM da Meta e cobranças no Business Manager, contratação separada de Branded Calls Hiya, desenvolvimento no aplicativo do cliente, rede/equipamentos/links/VPN/SBC/firewalls, licenças de terceiros não especificadas, integrações e customizações não previstas, serviços presenciais e viagens. Novas configurações, APIs, integrações, dashboards customizados, campanhas, treinamentos adicionais e projetos evolutivos ficam fora do suporte padrão. Pode explicar inclusões e exclusões, nunca informar tarifas, preços ou valores comerciais; encaminhar ao responsável comercial da Nuveto.",
+ "casos": "Casos de uso do material: vendas ativas e inside sales para aumentar conversas, conversão e velocidade do pipeline; bancos, financeiras e fintechs para reduzir desconfiança e rejeição de chamadas legítimas; cobrança e recuperação para aumentar contato útil; atendimento ativo e receptivo para integrar canais de voz; B2B outbound para recuperar conversas com decisores e produtividade de SDRs. Exemplos ilustrativos, não resultados prometidos: em vendas, comparar público e abordagem pelo contato efetivo; em cobrança, adequar mensagem ao perfil; em bancos, esclarecer identidade e motivo do contato; em B2B, testar horários e canais por perfil quando houver evidência. Número desconhecido e baixa taxa de atendimento podem indicar fricção, sem provar rejeição. Recomendações técnicas permanecem com a equipe Nuveto.",
+ "servicos": "Implementação padrão: kickoff, levantamento, configuração, testes, validação, apoio ao go-live e handoff. Estimativa até 30 dias corridos após assinatura condicionada a acessos, informações, aprovações e terceiros. Cliente indica responsáveis, viabiliza acessos e garante conformidade de bases e consentimentos. Customer Success: acompanhamento mensal até 1 hora e reunião tática adicional quando necessária até uma por mês. Suporte Break & Fix 7x24; SLA de primeira resposta, não resolução: crítico até 15 minutos corridos, alto até 2 horas corridas, médio até 8 horas úteis, baixo até 24 horas úteis. Disponibilidade de recursos depende de condições técnicas, regulatórias, integrações e contrato."
+}
+
+def product_topics(prompt):
+    q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    rules={"conceitos":r"conecta|chamada|produtiv|bilhet|duracao", "franquias":r"franquia|inclu|contempla|canai|canal|pacote", "exclusoes":r"cobert|cobr|meta|hiya|hsm|exclu|fora|nao inclu", "casos":r"caso|exemplo|venda|banco|financ|cobranca|b2b|sdr|uso", "servicos":r"suporte|sla|implant|ativacao|success|servico"}
+    return [k for k,v in rules.items() if re.search(v,q)]
+
+def commercial_price_question(prompt):
+    q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    return bool(re.search(r"preco|mensalidade|investimento|desconto|orcamento|quanto.*(?:custa|pago|pagar)|valor.*(?:conecta|setup|contrat|plano|pacote|excedente)|tarifa.*(?:meta|hiya|conecta|excedente)|(?:meta|hiya).*tarifa",q))
+
+def clear_ai_conversation():
+    for key in ["ai_history","ai_result","ai_prompt","ai_followup","ai_analysis_cache","ai_last_request"]:
+        st.session_state.pop(key,None)
 
 
 def knowledge_topics(prompt):
@@ -872,18 +896,26 @@ def local_dashboard_explanation(context, prompt):
     return {"resumo":answer,"recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
 
 
+AI_SYSTEM += "\nNunca informe preços comerciais ou tarifas do Conecta+, Meta ou Hiya. Oriente procurar o responsável comercial da Nuveto. Pode explicar franquias e exclusões e analisar custos históricos do dashboard. No resumo use bullets Markdown com quebras de linha. Distinga bilhetagem por duração de resultado do contato."
+
 def run_ai_analysis(context, prompt):
-    local=local_dashboard_explanation(context,prompt)
+    if commercial_price_question(prompt):
+        return {"resumo":"- Para preços, tarifas e condições comerciais do Conecta+, procure o responsável comercial da Nuveto.\n- Posso explicar as franquias, os itens incluídos e os componentes cobrados separadamente.","recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
+    local=local_dashboard_explanation(context,prompt) if not product_topics(prompt) and not st.session_state.get("ai_history") else None
     if local is not None:
         st.session_state.ai_diagnostics="Explicação calculada pelo dashboard · sem chamada à API"
         return local
     context=dict(context)
     context["conhecimento_do_dashboard"]=knowledge_for_question(prompt)
+    context["conhecimento_do_dashboard"]["produto"]= {k:PRODUCT_KNOWLEDGE[k] for k in product_topics(prompt)[:2]}
+    history=st.session_state.get("ai_history",[])
+    if history:
+        context["conhecimento_do_dashboard"]["conversa_anterior"] = history[-6:]
     config = dict(st.secrets.get("ai", {}))
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"dashboard-knowledge-v4"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"product-conversation-v5"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -894,7 +926,7 @@ def run_ai_analysis(context, prompt):
     else:
         summary, premises = compact_ai_context(context, prompt)
         def messages_for(value, recovery=False):
-            brevity = "\nComplete todos os campos do JSON. Resumo até 300 caracteres. Cada campo de recomendação até 160 caracteres. Cada campo da linha do tempo até 120 caracteres. Até 2 limitações curtas."
+            brevity = "\nComplete todos os campos do JSON. Resumo em 2–4 bullets com quebras de linha, até 700 caracteres. Cada campo de recomendação até 160 caracteres. Cada campo da linha do tempo até 120 caracteres. Até 2 limitações curtas."
             if recovery: brevity += "\nNesta resposta, use somente 1 recomendação principal e 3 etapas curtas; mantenha todas as propriedades obrigatórias."
             return [{"role":"system","content":GROQ_BUSINESS_SYSTEM + brevity + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
         try:
@@ -936,6 +968,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
     with st.sidebar:
         if st.button("Fechar IA ×",key="close_ai",use_container_width=True):
             st.session_state.ai_open=False
+            clear_ai_conversation()
             st.rerun()
         st.subheader("IA · Análise de negócio")
         st.caption("Estratégia: "+selected+" · "+context["filtros"]["inicio"]+" a "+context["filtros"]["fim"])
@@ -966,6 +999,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
                     st.error("Não foi possível concluir a análise. O dashboard continua disponível.")
                 else:
                     st.session_state.ai_result={"data":result,"fingerprint":fingerprint,"prompt":question}
+                    st.session_state.setdefault("ai_history",[]).extend([{"pergunta":question,"resposta":result["resumo"][:1800]}])
         with st.expander("Diagnóstico da conexão"):
             st.caption("Teste simples com a mesma chave e o mesmo modelo, sem dados da planilha.")
             if st.button("Testar conexão IA",key="test_ai_connection",use_container_width=True):
@@ -1003,13 +1037,19 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
             st.warning("Os dados ou filtros mudaram. Execute uma nova análise para este recorte.")
             return
         data=saved["data"]
+        history=st.session_state.get("ai_history",[])
+        if len(history)>1:
+            with st.expander("Perguntas anteriores"):
+                for turn in history[:-1]:
+                    st.markdown("**"+turn["pergunta"]+"**")
+                    st.markdown(turn["resposta"])
         if data.get("premissas_da_sintese"):
             with st.expander("Premissas da análise"):
                 for premise in data["premissas_da_sintese"]:
                     st.write(premise)
         with st.container(border=True):
             st.markdown("### Leitura executiva")
-            st.write(data["resumo"][:2000])
+            st.markdown(data["resumo"][:4000])
         if not data["recomendacoes"] and not data.get("explicacao_local"):
             st.info("Não houve recomendação de negócio válida nesta resposta. Tente uma pergunta sobre público, oferta, abordagem ou qualidade dos leads.")
         for position,row in enumerate(data["recomendacoes"],start=1):
@@ -1031,6 +1071,24 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
             with st.expander("Limitações da análise"):
                 for note in data["limitacoes"][:10]:st.write("• "+note[:1000])
         st.caption("Recomendações geradas por IA. Ganhos numéricos não são estimados sem dados e testes adequados.")
+        with st.form("ai_continue",clear_on_submit=True):
+            followup=st.text_area("Continue a conversa",key="ai_followup",max_chars=2000,height=100,placeholder="Pergunte sobre esta análise…")
+            send=st.form_submit_button("Enviar pergunta",use_container_width=True)
+        if send:
+            if not followup.strip():
+                st.warning("Escreva uma pergunta para continuar.")
+            else:
+                try:
+                    with st.spinner("Interpretando sua pergunta…"):
+                        result=run_ai_analysis(context,followup.strip())
+                    st.session_state.setdefault("ai_history",[]).append({"pergunta":followup.strip(),"resposta":result["resumo"][:1800]})
+                    st.session_state.ai_result={"data":result,"fingerprint":fingerprint,"prompt":followup.strip()}
+                    st.rerun()
+                except AIAnalysisError as exc:
+                    st.error(str(exc))
+                except Exception:
+                    st.error("Não foi possível concluir a resposta. Sua conversa foi mantida.")
+
 
 
 KPI_LABELS = ["Números únicos", "Contatos produtivos", "Contatos improdutivos", "Sem contato", "Custo total", "Custo por contato efetivo"]
@@ -1331,9 +1389,11 @@ with cost_button_column:
     if st.button("⚙", key="open_settings", help="Configurações", use_container_width=True):
         st.session_state.costs_open = not st.session_state.costs_open
         st.session_state.ai_open = False
+        clear_ai_conversation()
 with ai_button_column:
     if st.button("✦",key="open_ai",help="IA · Análise de negócio",use_container_width=True):
         st.session_state.ai_open = not st.session_state.ai_open
+        if not st.session_state.ai_open: clear_ai_conversation()
         st.session_state.costs_open = False
 sidebar_display = "block" if (st.session_state.costs_open or st.session_state.ai_open) else "none"
 st.markdown(f"""<style>
@@ -1529,11 +1589,8 @@ with f1:
         date_start, date_end = map(pd.Timestamp, selection)
 with f2:
     selected = st.selectbox("Estratégia", ["Todas"] + names)
-with f3:
-    # Escolha separada para os painéis inferiores quando os KPIs estão consolidados.
-    detail_name = st.selectbox("Detalhar estratégia", names, index=names.index(selected) if selected in names else 0, disabled=selected != "Todas")
-    if selected != "Todas":
-        detail_name = selected
+detail_name = selected if selected != "Todas" else st.session_state.get("detail_strategy",names[0])
+if detail_name not in names: detail_name=names[0]
 
 period_df = df_fact if date_start is None else df_fact[df_fact["_date"].between(date_start, date_end)]
 filtered = period_df if selected == "Todas" else period_df[period_df["strategy_name"].eq(selected)]
@@ -1601,6 +1658,15 @@ with st.container(key="kpi_grid"):
 render_indicator_detail(filtered,selected,date_start,date_end)
 
 summary = [(name, metrics(period_df[period_df["strategy_name"].eq(name)])) for name in names]
+st.markdown("### Visão por Estratégia")
+st.caption("Selecione uma linha para visualizar os detalhes da estratégia abaixo.")
+strategy_view=pd.DataFrame([{"Estratégia":name,"Números únicos":m[0],"% contato produtivo":round(m[1]/m[0]*100,1) if m[0] else 0,"Custo total":m[4],"Custo por contato efetivo":m[5]} for name,m in summary])
+event=st.dataframe(strategy_view,hide_index=True,use_container_width=True,on_select="rerun",selection_mode="single-row",key="strategy_table_selection",column_config={"% contato produtivo":st.column_config.NumberColumn(format="%.1f%%"),"Custo total":st.column_config.NumberColumn(format="R$ %.2f"),"Custo por contato efetivo":st.column_config.NumberColumn(format="R$ %.2f")})
+if event.selection.rows:
+    detail_name=strategy_view.iloc[event.selection.rows[0]]["Estratégia"]
+    st.session_state.detail_strategy=detail_name
+# A escolha da tabela controla apenas os painéis inferiores.
+detail=period_df[period_df["strategy_name"].eq(detail_name)]
 max_unique = max([m[0] for _, m in summary] + [1])
 max_cost = max([m[4] for _, m in summary] + [1])
 max_unit = max([m[5] or 0 for _, m in summary] + [1])
@@ -1638,10 +1704,10 @@ config_panel = panel("Configuração da Estratégia Selecionada", config_body, '
 m = metrics(detail)
 prod, improd, no_contact = outcome_frames(detail)
 funnel_rows = []
-for value,label,width,color in [(m[0],"Números únicos",100,"#087aff"),(m[1],"Contatos produtivos",81,"#00bffc"),(m[2],"Contatos improdutivos",63,"#e438ad"),(m[3],"Sem contato",47,"#8b9cae")]:
+for value,label,width,color in [(m[0],"Total de Números Únicos",100,"#087aff"),(m[1]+m[2],"Números Únicos contactados",81,"#00bffc"),(m[2],"Contatos Improdutivos",63,"#e438ad"),(m[1],"Contatos Produtivos",47,"#00cdb2")]:
     pct = value/m[0]*100 if m[0] else 0
     funnel_rows.append(f'<div class="funnel-row"><div class="funnel-shape"><div class="funnel-layer" style="width:{width}%;--accent:{color}"><span>{label}</span><b>{br(value)}</b></div></div><div class="funnel-pct">{br(pct,1)}%</div></div>')
-funnel_body = '<div class="panel-body"><div class="funnel">'+"".join(funnel_rows)+'</div><div class="funnel-note">Resultados únicos por pessoa: produtivo tem prioridade sobre improdutivo. Sem contato representa os demais números da base filtrada.</div></div>'
+funnel_body = '<div class="panel-body"><div class="funnel">'+"".join(funnel_rows)+'</div><div class="funnel-note">Contactados = produtivos + improdutivos. Os dois resultados dividem os contactados; não são etapas sucessivas. Percentuais sobre o total de números únicos. Não contactados ficam fora do funil.</div></div>'
 funnel_panel = panel("Funil da Estratégia Selecionada", funnel_body, f'<span class="tag">{esc(detail_name)}</span>', "funnel-panel")
 prod_series = prod.groupby("channel")["contact_id"].nunique().sort_values(ascending=False)
 prod_series.index = prod_series.index.map(channel_name)
@@ -1660,6 +1726,6 @@ for i,(channel,value) in enumerate(cost_series.items()):
 mini_cards = "".join(f'<div class="mini-kpi"><small>{label}</small><b style="--value-size:{100/(max(1,len(money(value)))*0.65):.2f}cqw">{money(value)}</b></div>' for label,value in [("Custo por contato efetivo",m[5]),("Custo por contato improdutivo",m[4]/m[2] if m[2] else None),("Custo total da estratégia",m[4])])
 cost_body = '<div class="cost-body"><div class="cost-cards">'+mini_cards+'</div><div><div class="mini-title">Composição do custo por canal</div><div class="stacked">'+"".join(segments)+'</div><div class="cost-legend">'+"".join(cost_legend)+'</div></div></div>'
 cost_panel = panel("Custos da Estratégia no Período",cost_body,f'<span class="tag">{esc(detail_name)}</span>',"cost-panel")
-output = '<div class="cockpit"><div class="dashboard">'+strategy_panel+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
+output = '<div class="cockpit"><div class="dashboard">'+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
 # Uma única árvore HTML mantém o grid coeso e evita tags abertas entre blocos Streamlit.
 st.markdown(output, unsafe_allow_html=True)
