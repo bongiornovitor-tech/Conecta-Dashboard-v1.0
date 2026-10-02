@@ -952,7 +952,7 @@ def compact_ai_context(context, prompt, minimal=False):
         knowledge=summary.get("conhecimento_do_dashboard",{})
         # Preserva assunto e premissas essenciais; no máximo dois turnos resumidos.
         if "conversa_anterior" in knowledge:
-            knowledge["conversa_anterior"]=[{"pergunta":t["pergunta"][:250],"resposta":t["resposta"][:500]} for t in knowledge["conversa_anterior"][-2:]]
+            knowledge["conversa_anterior"]=[{"pergunta":t["pergunta"][:300],"resposta":t["resposta"][:900]} for t in knowledge["conversa_anterior"][-2:]]
         premises.append("Para esta resposta, usei os indicadores gerais, a comparação e o conhecimento do assunto. Não inferi detalhes por canal ou horário que ficaram fora da síntese.")
     summary["premissas_da_sintese"] = premises
     return summary,premises
@@ -1008,7 +1008,7 @@ def commercial_price_question(prompt):
     return bool(re.search(r"preco|mensalidade|investimento|desconto|orcamento|quanto.*(?:custa|pago|pagar)|valor.*(?:conecta|setup|contrat|plano|pacote|excedente)|tarifa.*(?:meta|hiya|conecta|excedente)|(?:meta|hiya).*tarifa",q))
 
 def clear_ai_conversation():
-    for key in ["ai_history","ai_result","ai_prompt","ai_followup","ai_analysis_cache","ai_last_request"]:
+    for key in ["ai_history","ai_result","ai_prompt","ai_followup","ai_analysis_cache","ai_last_request","ai_pending_question"]:
         st.session_state.pop(key,None)
 
 
@@ -1061,12 +1061,53 @@ def local_dashboard_explanation(context, prompt):
     return {"resumo":answer,"recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
 
 
-AI_SYSTEM += "\nNunca informe preços comerciais ou tarifas do Conecta+, Meta ou Hiya. Oriente procurar o responsável comercial da Nuveto. Pode explicar franquias e exclusões e analisar custos históricos do dashboard. No resumo use bullets Markdown com quebras de linha. Distinga bilhetagem por duração de resultado do contato."
+AI_SYSTEM += "\nNunca informe preços comerciais ou tarifas do Conecta+, Meta ou Hiya. Oriente procurar o responsável comercial da Nuveto. Pode explicar franquias e exclusões e analisar custos históricos do dashboard. No resumo use bullets Markdown com quebras de linha. Responda à pergunta mais recente com base na conversa anterior; não repita a resposta anterior. Recomendações e linha do tempo podem ficar vazias em esclarecimentos. Distinga bilhetagem por duração de resultado do contato."
+
+def conversation_context(history):
+    """Tela guarda respostas completas; entrada preserva escopo e detalhes úteis em síntese."""
+    turns=[]
+    successful=[t for t in history if t.get("data") or t.get("resposta")]
+    selected=successful[-3:]
+    if len(successful)>3: selected=[successful[0]]+successful[-2:]
+    for turn in selected:
+        data=turn.get("data",{})
+        summary=data.get("resumo",turn.get("resposta",""))[:1000]
+        actions=[{"titulo":r.get("titulo",""),"acao":r.get("acao",""),"evidencia":r.get("evidencia","")} for r in data.get("recomendacoes",[])[:2]]
+        text=json.dumps({"resposta":summary,"recomendacoes":actions,"recorte":turn.get("scope",{})},ensure_ascii=False,separators=(",",":"))
+        turns.append({"pergunta":turn["pergunta"][:500],"resposta":text})
+    return turns
+
+
+def queue_ai_question():
+    question=st.session_state.get("ai_followup","").strip()
+    if question: st.session_state.ai_pending_question=question
+
+
+def render_ai_answer(data):
+    st.markdown(data.get("resumo","")[:6000])
+    for position,row in enumerate(data.get("recomendacoes",[]),start=1):
+        with st.container(border=True):
+            st.markdown(f"**{position}. {row['titulo'][:200]}**")
+            st.caption("Confiança: "+row["confianca"][:30])
+            for label,field in [("Objetivo","objetivo"),("Evidência","evidencia"),("Hipótese","hipotese"),("Ação sugerida","acao"),("Como validar","validacao")]:
+                st.markdown("**"+label+"**")
+                st.markdown(row[field][:2000])
+    if data.get("linha_do_tempo"):
+        st.markdown("**Linha do tempo · teste e validação**")
+        for row in data["linha_do_tempo"]:
+            st.markdown("**"+row["prazo"][:100]+"**")
+            st.markdown(row["acao"][:1000])
+            st.caption("Como acompanhar: "+row["indicador"][:500])
+    notes=data.get("premissas_da_sintese",[])+data.get("limitacoes",[])
+    if notes:
+        with st.expander("Premissas e limitações"):
+            for note in notes: st.markdown("- "+note[:1000])
+
 
 def run_ai_analysis(context, prompt):
     if commercial_price_question(prompt):
         return {"resumo":"- Para preços, tarifas e condições comerciais do Conecta+, procure o responsável comercial da Nuveto.\n- Posso explicar as franquias, os itens incluídos e os componentes cobrados separadamente.","recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
-    product_answer=local_product_explanation(prompt)
+    product_answer=local_product_explanation(prompt) if not st.session_state.get("ai_history") else None
     if product_answer is not None:
         st.session_state.ai_diagnostics="Explicação do conhecimento do dashboard · sem chamada à API"
         return product_answer
@@ -1079,12 +1120,12 @@ def run_ai_analysis(context, prompt):
     context["conhecimento_do_dashboard"]["produto"]= {k:PRODUCT_KNOWLEDGE[k] for k in product_topics(prompt)[:2]}
     history=st.session_state.get("ai_history",[])
     if history:
-        context["conhecimento_do_dashboard"]["conversa_anterior"] = [{"pergunta":t["pergunta"][:300],"resposta":t["resposta"][:700]} for t in history[-3:]]
+        context["conhecimento_do_dashboard"]["conversa_anterior"] = conversation_context(history)
     config = dict(st.secrets.get("ai", {}))
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"billing-demo-v7"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"conversation-v8"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -1097,7 +1138,15 @@ def run_ai_analysis(context, prompt):
         def messages_for(value, recovery=False):
             brevity = "\nComplete todos os campos do JSON. Resumo em 2–4 bullets com quebras de linha, até 700 caracteres. Cada campo de recomendação até 160 caracteres. Cada campo da linha do tempo até 120 caracteres. Até 2 limitações curtas."
             if recovery: brevity += "\nNesta resposta, use somente 1 recomendação principal e 3 etapas curtas; mantenha todas as propriedades obrigatórias."
-            return [{"role":"system","content":GROQ_BUSINESS_SYSTEM + brevity + "\nSeja breve: até 3 recomendações, até 3 etapas. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":json.dumps({"pergunta":prompt,"contexto":business_context(value)},ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
+            scoped=dict(value)
+            knowledge=dict(scoped.get("conhecimento_do_dashboard",{}))
+            conversation=knowledge.pop("conversa_anterior",[])
+            scoped["conhecimento_do_dashboard"]=knowledge
+            messages=[{"role":"system","content":GROQ_BUSINESS_SYSTEM + brevity + "\nResponda à PERGUNTA MAIS RECENTE usando os turnos anteriores para resolver referências. Não repita a análise anterior: explique somente o que foi pedido agora. Recomendações e linha do tempo podem ser listas vazias em esclarecimentos. Se o pedido for ambíguo, faça uma pergunta curta. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":"Dados e conhecimento para esta conversa: "+json.dumps(business_context(scoped),ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
+            for turn in conversation:
+                messages.extend([{"role":"user","content":turn["pergunta"]},{"role":"assistant","content":turn["resposta"]}])
+            messages.append({"role":"user","content":prompt})
+            return messages
         try:
             content = groq_request(messages_for(summary))
         except (AIRequestTooLarge, AIOutputIncomplete):
@@ -1136,8 +1185,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing
     if billing is not None:
         context["controle_mensal_demo"]={k:v for k,v in billing.items() if not k.endswith("cost")}
         context["controle_mensal_demo"]["data_referencia"]=datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y")
-        context["controle_mensal_demo"]["premissa"]="Demonstração independente dos filtros; acumulado até o dia atual; franquias globais de 50 mil minutos tradicionais e 50 mil opt-ins. Não é consumo real ou fatura real."
-    fingerprint=hashlib.sha256(json.dumps(context,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        context["controle_mensal_demo"]["premissa"]="Demonstração independente dos filtros, acumulada até hoje; franquias globais de 50 mil minutos tradicionais e 50 mil opt-ins. Não é fatura real."
     with st.sidebar:
         if st.button("Fechar IA ×",key="close_ai",use_container_width=True):
             st.session_state.ai_open=False
@@ -1149,118 +1197,50 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing
             for topic,label in [("indicadores","Indicadores e funil"),("custos","Custos"),("comparacao","Comparação de períodos"),("filtros","Filtros"),("graficos","Gráficos"),("whatsapp","Jornada WhatsApp"),("dados","Dados demonstrativos"),("campos","Significado dos campos"),("premissas","Premissas")]:
                 st.markdown("**"+label+"**")
                 st.write(DASHBOARD_KNOWLEDGE[topic])
-        if "ai_prompt" not in st.session_state:
-            st.session_state.ai_prompt = ""
-        st.text_area("O que você quer entender?",key="ai_prompt",height=140,max_chars=2000,placeholder="Ex.: O que devo mudar no público ou na abordagem para aumentar contatos produtivos?")
-        st.caption("Envia um resumo agregado ao fornecedor de IA configurado. Sem telefones ou IDs individuais. Não altera a planilha.")
-        if st.button("Analisar",key="run_ai",type="primary",use_container_width=True):
-            question=st.session_state.ai_prompt.strip()
-            if not question:
-                st.warning("Escreva uma pergunta.")
-            elif df.empty:
-                st.warning("Não há dados neste recorte para analisar.")
-            elif time.time()-st.session_state.get("ai_last_request",0)<10:
-                st.info("Aguarde alguns segundos antes de executar outra análise.")
+        history=st.session_state.setdefault("ai_history",[])
+        # Compatibilidade com conversas iniciadas na versão anterior.
+        for turn in history:
+            if "data" not in turn and turn.get("resposta"):
+                turn["data"]={"resumo":turn["resposta"],"recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
+        question=st.session_state.pop("ai_pending_question",None)
+        if question:
+            try:
+                with st.spinner("Interpretando sua pergunta…"):
+                    result=run_ai_analysis(context,question)
+            except AIAnalysisError as exc:
+                history.append({"pergunta":question,"erro":str(exc),"scope":dict(context["filtros"])})
+            except Exception:
+                history.append({"pergunta":question,"erro":"Não foi possível concluir a resposta. A conversa foi mantida; tente novamente.","scope":dict(context["filtros"])})
             else:
-                st.session_state.ai_last_request=time.time()
-                try:
-                    with st.spinner("Interpretando os resultados…"):
-                        result=run_ai_analysis(context,question)
-                except AIAnalysisError as exc:
-                    st.error(str(exc))
-                except Exception:
-                    st.error("Não foi possível concluir a análise. O dashboard continua disponível.")
+                history.append({"pergunta":question,"data":result,"scope":dict(context["filtros"])})
+        # Cada pergunta precede sua própria resposta; nunca substituir os turnos anteriores.
+        for turn in history:
+            with st.chat_message("user"):
+                st.markdown(turn["pergunta"])
+            with st.chat_message("assistant"):
+                if turn.get("scope") and turn["scope"]!=context["filtros"]:
+                    scope=turn["scope"]
+                    st.caption("Recorte desta resposta: "+str(scope))
+                if turn.get("data"):
+                    render_ai_answer(turn["data"])
                 else:
-                    st.session_state.ai_result={"data":result,"fingerprint":fingerprint,"prompt":question}
-                    st.session_state.setdefault("ai_history",[]).extend([{"pergunta":question,"resposta":result["resumo"][:1800]}])
+                    st.info(turn.get("erro","Resposta ainda não disponível."))
+        with st.form("ai_conversation_form",clear_on_submit=True):
+            st.text_area("Continue a conversa" if history else "O que você quer entender?",key="ai_followup",max_chars=2000,height=110,placeholder="Pergunte sobre a resposta anterior…" if history else "Ex.: Quais decisões podem aumentar os contatos produtivos?")
+            st.form_submit_button("Enviar pergunta" if history else "Analisar",on_click=queue_ai_question,use_container_width=True,type="primary")
+        st.caption("Somente dados agregados. Sem telefones ou IDs individuais. A conversa só é apagada ao clicar em Fechar IA.")
         with st.expander("Diagnóstico da conexão"):
-            st.caption("Teste simples com a mesma chave e o mesmo modelo, sem dados da planilha.")
             if st.button("Testar conexão IA",key="test_ai_connection",use_container_width=True):
                 try:
                     with st.spinner("Testando a API…"):
                         model=test_ai_connection()
+                    st.success("Conexão funcionando com "+model+".")
                 except AIAnalysisError as exc:
-                    st.error(str(exc))
+                    st.info(str(exc))
                 except Exception:
-                    st.error("Não foi possível concluir o teste. Confira os Secrets.")
-                else:
-                    st.success("A API respondeu ao teste simples com "+model+".")
-            config = dict(st.secrets.get("ai",{}))
-            if str(config.get("provider","gemini")).lower() == "groq":
-                try:
-                    key, model = groq_config()
-                    stats = st.session_state.get("groq_usage_stats",{}).get(groq_budget_id(key,model),{})
-                    if stats:
-                        last=stats.get("last",{})
-                        st.caption("Consumo técnico · apenas esta sessão; inclui testes e chamadas sem análise concluída.")
-                        st.write("Chamadas: " + str(stats["calls"]) + " · Tokens medidos: " + str(stats["total_tokens"]))
-                        if "prompt_tokens" in last:
-                            st.write("Última chamada — entrada: " + str(last["prompt_tokens"]) + " · saída: " + str(last.get("completion_tokens",0)) + " · total: " + str(last.get("total_tokens",0)))
-                            if "reasoning_tokens" in last: st.caption("Raciocínio incluído na saída: " + str(last["reasoning_tokens"]))
-                        else: st.caption("A última chamada não informou consumo medido.")
-                        st.caption("Entrada estimada antes do envio: " + str(last.get("estimated_input",0)) + " · reserva para resposta: " + str(last.get("output_reserved",0)))
-                except AIAnalysisError:
-                    pass
+                    st.info("Não foi possível concluir o teste. A conversa foi mantida.")
             if st.session_state.get("ai_diagnostics"):
                 st.code(st.session_state.ai_diagnostics,language=None)
-        saved=st.session_state.get("ai_result")
-        if not saved:
-            return
-        if saved["fingerprint"]!=fingerprint:
-            st.warning("Os dados ou filtros mudaram. Execute uma nova análise para este recorte.")
-            return
-        data=saved["data"]
-        history=st.session_state.get("ai_history",[])
-        if len(history)>1:
-            with st.expander("Perguntas anteriores"):
-                for turn in history[:-1]:
-                    st.markdown("**"+turn["pergunta"]+"**")
-                    st.markdown(turn["resposta"])
-        if data.get("premissas_da_sintese"):
-            with st.expander("Premissas da análise"):
-                for premise in data["premissas_da_sintese"]:
-                    st.write(premise)
-        with st.container(border=True):
-            st.markdown("### Leitura executiva")
-            st.markdown(data["resumo"][:4000])
-        if not data["recomendacoes"] and not data.get("explicacao_local"):
-            st.info("Não houve recomendação de negócio válida nesta resposta. Tente uma pergunta sobre público, oferta, abordagem ou qualidade dos leads.")
-        for position,row in enumerate(data["recomendacoes"],start=1):
-            with st.container(border=True):
-                st.markdown(f"**{position}. {row['titulo'][:200]}**")
-                st.caption("Confiança: "+row["confianca"][:30])
-                for label,field in [("Objetivo","objetivo"),("Evidência","evidencia"),("Hipótese","hipotese"),("Ação sugerida","acao"),("Como validar","validacao")]:
-                    st.markdown("**"+label+"**")
-                    st.write(row[field][:2000])
-        if data["linha_do_tempo"]:
-            st.markdown("### Linha do tempo · teste e validação")
-        for row in data["linha_do_tempo"]:
-            with st.container(border=True):
-                st.markdown("**"+row["prazo"][:100]+"**")
-                st.write(row["acao"][:1000])
-                st.markdown("**Como acompanhar**")
-                st.write(row["indicador"][:500])
-        if data["limitacoes"]:
-            with st.expander("Limitações da análise"):
-                for note in data["limitacoes"][:10]:st.write("• "+note[:1000])
-        st.caption("Recomendações geradas por IA. Ganhos numéricos não são estimados sem dados e testes adequados.")
-        with st.form("ai_continue",clear_on_submit=True):
-            followup=st.text_area("Continue a conversa",key="ai_followup",max_chars=2000,height=100,placeholder="Pergunte sobre esta análise…")
-            send=st.form_submit_button("Enviar pergunta",use_container_width=True)
-        if send:
-            if not followup.strip():
-                st.warning("Escreva uma pergunta para continuar.")
-            else:
-                try:
-                    with st.spinner("Interpretando sua pergunta…"):
-                        result=run_ai_analysis(context,followup.strip())
-                    st.session_state.setdefault("ai_history",[]).append({"pergunta":followup.strip(),"resposta":result["resumo"][:1800]})
-                    st.session_state.ai_result={"data":result,"fingerprint":fingerprint,"prompt":followup.strip()}
-                    st.rerun()
-                except AIAnalysisError as exc:
-                    st.error(str(exc))
-                except Exception:
-                    st.error("Não foi possível concluir a resposta. Sua conversa foi mantida.")
 
 
 
@@ -1578,11 +1558,9 @@ with cost_button_column:
     if st.button("⚙", key="open_settings", help="Configurações", use_container_width=True):
         st.session_state.costs_open = not st.session_state.costs_open
         st.session_state.ai_open = False
-        clear_ai_conversation()
 with ai_button_column:
     if st.button("✦",key="open_ai",help="IA · Análise de negócio",use_container_width=True):
         st.session_state.ai_open = not st.session_state.ai_open
-        if not st.session_state.ai_open: clear_ai_conversation()
         st.session_state.costs_open = False
 sidebar_display = "block" if (st.session_state.costs_open or st.session_state.ai_open) else "none"
 st.markdown(f"""<style>
