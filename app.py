@@ -1390,36 +1390,79 @@ def non_contact_diagnosis(frame):
     return {"unique":len(cohort),"attempts":executed,"counts":counts,"people":{k:len(v) for k,v in people.items()},"excluded":exclusions,"chart":chart,"insights":insights[:3]}
 
 
+def non_contact_channel_pies(frame):
+    _,_,cohort=outcome_frames(frame)
+    attempts=frame[frame["contact_id"].isin(cohort["contact_id"])].copy()
+    if attempts.empty: return {"unique":0,"channels":{}}
+    attempts["_kind"]=attempts.apply(lambda row:non_contact_reason(row)[1],axis=1)
+    excluded=attempts["_kind"].isin(["excluded_success","excluded_technical"])
+    executed=attempts[~excluded].copy()
+    time_column=next((c for c in ["attempt_timestamp","attempt_datetime","_date"] if c in executed),None)
+    if time_column:
+        executed["_ordered_time"]=pd.to_datetime(executed[time_column],errors="coerce",utc=True)
+        executed=executed.sort_values("_ordered_time",kind="stable",na_position="first")
+    data={"unique":len(cohort),"excluded":int(excluded.sum()),"channels":{}}
+    labels={kind:label for label,kind in NON_CONTACT_REASONS.values()};labels["unknown"]="Motivo não identificado"
+    for channel in ["traditional_call","branded_call"]:
+        rows=executed[executed["channel"].eq(channel)].drop_duplicates("contact_id",keep="last")
+        counts=rows["_kind"].value_counts().to_dict()
+        chart=[];total=len(rows)
+        for kind,n in sorted(counts.items(),key=lambda pair:(-pair[1],pair[0])):
+            label=labels.get(kind,"Motivo não identificado")
+            if kind in ["productive","unproductive"]:label="Resultado precisa de validação"
+            if len(chart)<4 and n/max(1,total)>=0.04:
+                chart.append({"key":kind,"label":label,"count":int(n)})
+        other=total-sum(r["count"] for r in chart)
+        if other:chart.append({"key":"other","label":"Outros motivos","count":other})
+        data["channels"][channel]={"total":total,"chart":chart,"counts":counts}
+    whatsapp=executed[executed["channel"].isin(["whatsapp_call","whatsapp_text"])]
+    if "planned_channel" in executed:
+        whatsapp=executed[executed["channel"].isin(["whatsapp_call","whatsapp_text"])|executed["planned_channel"].eq("whatsapp_call")]
+    flags=pd.Series(False,index=whatsapp.index)
+    for field in ["whatsapp_consent_before","whatsapp_consent_after"]:
+        if field in whatsapp:flags|=pd.to_numeric(whatsapp[field],errors="coerce").eq(1)
+    if "contact_result" in whatsapp:flags|=whatsapp["contact_result"].astype(str).str.lower().eq("whatsapp_optin_granted")
+    total=whatsapp["contact_id"].nunique();consented=whatsapp.loc[flags,"contact_id"].nunique()
+    data["channels"]["whatsapp_call"]={"total":int(total),"chart":[{"key":"granted","label":"Consentimento registrado","count":int(consented)},{"key":"no_consent","label":"Sem consentimento registrado","count":int(total-consented)}],"counts":{"granted":int(consented),"no_consent":int(total-consented)}}
+    return data
+
+
+def channel_reason_pie(data):
+    if not data["total"]:return '<div class="nc-pie-empty">Nenhum número deste grupo foi abordado por este canal.</div>'
+    palette={"ring":"#168bff","busy":"#72a0f6","unreachable":"#983bff","filtered":"#f33b91","invalid":"#f7a95b","voicemail":"#f0a460","screening":"#e356ad","user_blocked":"#f33b91","other":"#7891b4","unknown":"#7891b4","granted":"#00cdb2","no_consent":"#657fa6"}
+    start=0.;segments=[];legend=[]
+    for row in data["chart"]:
+        if not row["count"]:continue
+        pct=row["count"]/data["total"]*100;color=palette.get(row["key"],"#7891b4")
+        segments.append(f'{color} {start:.3f}% {start+pct:.3f}%');start+=pct
+        legend.append(f'<div class="nc-pie-legend-row"><i style="background:{color}"></i><span>{esc(row["label"])}</span><b>{br(row["count"])}<small> {br(pct,1)}%</small></b></div>')
+    description="; ".join(r["label"]+": "+str(r["count"]) for r in data["chart"])
+    return '<div class="nc-pie-visual"><div class="nc-pie" role="img" aria-label="'+esc(description)+'" title="'+esc(description)+'" style="background:conic-gradient('+','.join(segments)+')"></div><div class="nc-pie-legend">'+''.join(legend)+'</div></div>'
+
+
 def render_non_contact_panel(frame,selected):
-    d=non_contact_diagnosis(frame)
-    if not d["unique"]:
-        return
-    colors={"ring":"#168bff","busy":"#72a0f6","unreachable":"#983bff","filtered":"#f33b91","screening":"#f33b91","user_blocked":"#f33b91","invalid":"#f7a95b","no_reply":"#00cdb2","declined":"#e99055","granted":"#00cdb2","other":"#7891b4","unknown":"#7891b4"}
-    bars=[]
-    for r in d["chart"]:
-        tooltip=f'{r["people"]} números neste motivo; o mesmo número pode ter outros motivos.' if r["people"] is not None else 'Motivos menos frequentes agrupados.'
-        bars.append(f'<div class="nc-reason" title="{esc(tooltip)}"><div><span>{esc(r["label"])}</span><b>{br(r["count"])} <small>· {br(r["percent"],1)}%</small></b></div><div class="nc-track"><i style="width:{r["percent"]:.2f}%;background:{colors.get(r["key"],"#7891b4")}"></i></div></div>')
-    counts=d["counts"]
-    facts=[]
-    if counts.get("ring"): facts.append(f'<b>{br(counts["ring"])} tentativas tocaram sem atendimento</b>, em {br(d["people"]["ring"])} números. Não prova recusa ou desinteresse.')
-    if counts.get("busy"): facts.append(f'<b>{br(counts["busy"])} encontraram o destino ocupado.</b> Isso difere de tocar sem atender.')
-    if counts.get("unreachable"): facts.append(f'<b>{br(counts["unreachable"])} não alcançaram o destino.</b> Pode ser indisponibilidade ou rede; a causa não está confirmada.')
-    if counts.get("network") or d["excluded"]["excluded_technical"]: facts.append(f'<b>Condições técnicas:</b> {br(counts.get("network",0))} falhas de rede identificadas e {br(d["excluded"]["excluded_technical"])} registros descartados. Descartes não contam como discagens executadas.')
-    if counts.get("filtered") or counts.get("screening") or counts.get("user_blocked"):
-        facts.append(f'<b>Filtros e bloqueios:</b> {br(counts.get("filtered",0))} filtros sem mecanismo identificado; {br(counts.get("screening",0))} registros explícitos de triagem automática; {br(counts.get("user_blocked",0))} registros explícitos de bloqueio pelo usuário. Filtro genérico não comprova os dois últimos.')
-    if counts.get("voicemail"): facts.append(f'<b>{br(counts["voicemail"])} caixas postais identificadas</b> nos registros deste grupo.')
-    else: facts.append("<b>Caixa postal:</b> sem identificação específica nos registros deste grupo; não é possível estimar a quantidade.")
-    if counts.get("invalid"): facts.append(f'<b>{br(counts["invalid"])} tentativas com número inválido ou inexistente registrado.</b> Vale revisar a origem e a qualidade desses leads.')
-    if counts.get("no_reply") or counts.get("declined") or counts.get("granted"):
-        facts.append(f'<b>Autorização WhatsApp:</b> {br(counts.get("no_reply",0))} sem resposta; {br(counts.get("declined",0))} recusas; {br(counts.get("granted",0))} autorizações sem contato concluído. Consentimento não equivale a atendimento.')
-    if not facts: facts.append("Os registros não detalham a causa do não contato com segurança.")
-    caveat="Caixa postal, triagem automática e bloqueio pelo cliente só são contados quando explicitamente identificados. A ausência dessa identificação não significa ausência do evento. Contatos já classificados como improdutivos ficam fora deste grupo."
-    body='<div class="nc-body"><div class="nc-chart"><div class="nc-intro"><b>'+br(d["unique"])+' números não contactados</b><span>'+br(d["attempts"])+' tentativas consideradas</span></div>'+(''.join(bars) if bars else '<p>Este grupo contém somente registros descartados, sem tentativas executadas identificadas.</p>')+'<div class="nc-foot">Percentuais sobre tentativas. Pessoas podem aparecer em mais de um motivo. '+br(sum(d["excluded"].values()))+' registros descartados fora da distribuição.</div></div><div class="nc-reading"><h3>O que os dados mostram</h3><ul>'+''.join('<li>'+f+'</li>' for f in facts)+'</ul><h3>Onde agir no negócio</h3><ul class="nc-actions">'+''.join('<li>'+esc(t)+'</li>' for t in d["insights"])+'</ul><div class="nc-foot">'+caveat+'</div></div></div>'
+    diagnosis=non_contact_channel_pies(frame)
+    if not diagnosis["unique"]:return
+    cards=[]
+    for channel,title in [("traditional_call","Telefonia tradicional"),("branded_call","Branded Calls"),("whatsapp_call","WhatsApp · consentimento")]:
+        data=diagnosis["channels"][channel];counts=data["counts"]
+        if channel=="whatsapp_call":
+            reading=f'{br(counts["granted"])} números tiveram consentimento registrado; {br(counts["no_consent"])} não tiveram. Autorizar não significa que o contato foi concluído.'
+            action="Confirme canal e horário preferidos com quem autorizou. Para os demais, revise a mensagem e a oferta, respeitando recusas."
+        else:
+            leading=data["chart"][0] if data["chart"] else None
+            reading=(f'O motivo mais frequente na última tentativa foi “{leading["label"]}”: {br(leading["count"])} números.' if leading else "Sem dados deste canal no grupo de não contactados.")
+            if counts.get("invalid"):action="Valide os telefones e compare a qualidade das fontes de leads."
+            elif counts.get("ring") or counts.get("busy"):action="Teste horários e uma mensagem que esclareça a identidade da empresa e o motivo do contato."
+            elif counts.get("filtered") or counts.get("unreachable"):action="Separe indisponibilidade e filtragem ao avaliar a receptividade do público; esses motivos não comprovam desinteresse."
+            else:action="Compare públicos, ofertas e canais antes de decidir como ajustar a abordagem."
+        cards.append('<article class="nc-pie-card"><h3>'+title+'</h3><div class="nc-pie-total"><b>'+br(data["total"])+'</b><span>números únicos abordados</span></div>'+channel_reason_pie(data)+'<div class="nc-pie-reading">'+esc(reading)+'</div><div class="nc-pie-action"><strong>Ação de negócio</strong>'+esc(action)+'</div></article>')
+    body='<div class="nc-pies-grid">'+''.join(cards)+'</div><div class="nc-pies-note">Grupo: '+br(diagnosis["unique"])+' números sem contato no período e na estratégia filtrados. Telefonia: último motivo registrado por número em cada canal. WhatsApp: consentimento registrado ao menos uma vez no período, inclusive no fluxo de texto associado. Um número pode aparecer em canais diferentes; não some as pizzas. '+br(diagnosis["excluded"])+' registros descartados fora dos gráficos. Filtro genérico não confirma call screening ou bloqueio pelo usuário.</div>'
     st.markdown("""<style>
-.nc-panel{margin:14px 0;background:linear-gradient(125deg,#061c35,#03162b);}.nc-body{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.25fr);gap:26px;padding:18px;}.nc-intro{display:flex;flex-direction:column;gap:4px;margin-bottom:18px;}.nc-intro b{font-size:21px;}.nc-intro span{color:#9fbbdf;font-size:11px;}.nc-reason{margin:0 0 13px;}.nc-reason>div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:12px;}.nc-reason b{white-space:nowrap;font-size:13px;}.nc-reason small{color:#a9bfdf;font-size:11px;}.nc-track{height:8px;background:#123454;border-radius:5px;margin-top:7px;overflow:hidden;}.nc-track i{display:block;height:100%;border-radius:5px;}.nc-reading h3{font-size:14px;margin:0 0 9px;color:#edf4ff;}.nc-reading ul{margin:0 0 15px;padding-left:16px;font-size:12px;line-height:1.55;color:#c4d6ed;}.nc-reading li{margin-bottom:7px;}.nc-reading b{color:#f9f9fa;}.nc-actions li::marker{color:#00cdb2;}.nc-foot{font-size:10px;line-height:1.5;color:#95b0d2;}
-@media(max-width:900px){.nc-body{grid-template-columns:1fr;gap:18px;}}@media(max-width:560px){.nc-body{padding:13px;}.nc-intro b{font-size:18px;}.nc-reason>div:first-child{font-size:11px;}}
+.nc-pies-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:16px;}.nc-pie-card{background:#06213b;border:1px solid #1b4269;border-radius:12px;padding:16px;min-width:0;}.nc-pie-card h3{font-size:15px;margin:0 0 11px;}.nc-pie-total{display:flex;gap:9px;align-items:baseline;margin-bottom:15px;}.nc-pie-total b{font-size:27px;line-height:1;}.nc-pie-total span{font-size:10px;color:#a7bfdf;}.nc-pie-visual{display:flex;align-items:center;gap:16px;min-height:155px;}.nc-pie{width:145px;aspect-ratio:1;border-radius:50%;flex-shrink:0;box-shadow:0 4px 20px #0003;}.nc-pie-legend{flex:1;min-width:0;}.nc-pie-legend-row{display:grid;grid-template-columns:8px 1fr auto;gap:6px;align-items:center;font-size:10px;margin-bottom:10px;}.nc-pie-legend-row>i{width:7px;height:7px;border-radius:50%;}.nc-pie-legend-row b{font-size:11px;white-space:nowrap;}.nc-pie-legend-row small{display:block;color:#a7bfdf;font-size:10px;text-align:right;}.nc-pie-reading{font-size:11px;line-height:1.55;color:#c4d6ed;border-top:1px solid #204267;margin-top:14px;padding-top:11px;}.nc-pie-action{font-size:11px;line-height:1.55;color:#c4d6ed;margin-top:10px;}.nc-pie-action strong{display:block;font-size:11px;color:#00cdb2;margin-bottom:3px;}.nc-pies-note{padding:0 16px 14px;font-size:10px;line-height:1.55;color:#95b0d2;}.nc-pie-empty{min-height:155px;display:flex;align-items:center;color:#95b0d2;font-size:12px;}
+@media(max-width:1400px) and (min-width:901px){.nc-pie-visual{flex-direction:column;}.nc-pie-legend{width:100%;min-height:100px;}}@media(max-width:900px){.nc-pies-grid{grid-template-columns:1fr;}.nc-pie-visual{justify-content:flex-start;}.nc-pie-legend{max-width:350px;}}@media(max-width:420px){.nc-pie-visual{gap:12px;}.nc-pie{width:115px;}.nc-pie-card{padding:13px;}}
 </style>""",unsafe_allow_html=True)
-    st.markdown('<div class="cockpit">'+panel("Por que não conseguimos contato?",body,'<span class="tag">'+esc(selected)+'</span>',"nc-panel")+'</div>',unsafe_allow_html=True)
+    st.markdown('<div class="cockpit">'+panel("Não contactados · motivos por canal",body,'<span class="tag">'+esc(selected)+'</span>',"nc-panel")+'</div>',unsafe_allow_html=True)
 
 
 def analytic_attempts(df):
@@ -1965,7 +2008,6 @@ with st.container(key="kpi_grid"):
             with st.container(key=f"kpi_click_{index}"):
                 st.markdown('<div class="cockpit">'+kpi_html[index]+'</div>',unsafe_allow_html=True)
                 st.button(KPI_LABELS[index],key=f"open_indicator_{index}",on_click=open_indicator,args=(index,),use_container_width=True)
-render_non_contact_panel(filtered,selected)
 render_indicator_detail(filtered,selected,date_start,date_end)
 
 summary = [(name, metrics(period_df[period_df["strategy_name"].eq(name)])) for name in names]
@@ -2054,3 +2096,6 @@ cost_panel = panel("Custos da Estratégia no Período",cost_body,f'<span class="
 output = '<div class="cockpit"><div class="dashboard strategy-config-wide">'+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
 # Uma única árvore HTML mantém o grid coeso e evita tags abertas entre blocos Streamlit.
 st.markdown(output, unsafe_allow_html=True)
+
+# Último quadro: resultados por canal dos números ainda não contactados.
+render_non_contact_panel(filtered,selected)
