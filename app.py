@@ -80,7 +80,7 @@ CSS = """
 .cockpit * {box-sizing:border-box;}
 .cockpit {font-family:'Plus Jakarta Sans',sans-serif; color:var(--ink); font-size:12px; line-height:1.4;}
 .cockpit h1,.cockpit h2,.cockpit h3,.cockpit p {margin:0; padding:0; font-family:inherit; color:inherit;}
-.hero {display:grid;grid-template-columns:235px 1fr auto;gap:24px;align-items:center; min-height:88px; border-bottom:1px solid #123a62; padding:0 12px 15px; margin-bottom:2px;position:relative;overflow:hidden;}
+.hero {display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center; min-height:88px; border-bottom:1px solid #123a62; padding:0 12px 15px; margin-bottom:2px;position:relative;overflow:hidden;}
 .hero:after {content:'';position:absolute;width:360px;height:85px;right:25%;top:8px;border-top:2px solid #5234ee;border-radius:50%;transform:rotate(-12deg);box-shadow:0 -12px 45px #2548fb24;pointer-events:none;}
 .brand {font-size:23px;font-weight:800;letter-spacing:-.7px;}.brand span{color:#4461ff}.brand small{display:block;font-size:12px;font-weight:400;color:var(--muted);letter-spacing:0;margin-top:5px;max-width:170px;}
 .hero h1{font-size:clamp(24px,2.65vw,44px);font-weight:800;letter-spacing:-1.5px;line-height:1.15;position:relative;z-index:1;}
@@ -1401,7 +1401,7 @@ def render_indicator_detail(df, selected_strategy, start, end):
             st.warning("Há tentativas sem data válida. Elas não entram no gráfico temporal.")
 
 
-hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>| Conecta+</span><small>Inteligência que conecta<br>os seus resultados.</small></div><div><p>Efetividade, custo e performance por estratégia</p></div><div class="use-cases">' + "".join(f'<div class="use-case">{icon(kind,"#4759ff")}<div><b>{name}</b><small>{desc}</small></div></div>' for kind, name, desc in [("chat", "Marketing", "Mais oportunidades"), ("bars", "Vendas", "Mais conversões"), ("bag", "Cobrança", "Mais resultados")]) + '</div></div></div>'
+hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>| Conecta+</span><small>Inteligência que conecta<br>os seus resultados.</small></div><div class="use-cases">' + "".join(f'<div class="use-case">{icon(kind,"#4759ff")}<div><b>{name}</b><small>{desc}</small></div></div>' for kind, name, desc in [("chat", "Marketing", "Mais oportunidades"), ("bars", "Vendas", "Mais conversões"), ("bag", "Cobrança", "Mais resultados")]) + '</div></div></div>'
 st.markdown(hero, unsafe_allow_html=True)
 try:
     with st.spinner("Carregando indicadores…"):
