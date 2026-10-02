@@ -1331,6 +1331,97 @@ def indicator_series(df, index, granularity, start=None, end=None):
     return base.reset_index(), attempts
 
 
+
+NON_CONTACT_REASONS = {
+    "rang_not_answered":("Tocou, sem atendimento","ring"),"busy":("Destino ocupado","busy"),
+    "unreachable":("Destino indisponível","unreachable"),"filtered":("Chamada filtrada","filtered"),
+    "technical_exclusion":("Descartada por condição técnica","excluded_technical"),
+    "excluded_after_success":("Descartada após sucesso","excluded_success"),
+    "whatsapp_optin_no_reply":("Autorização sem resposta","no_reply"),
+    "whatsapp_optin_declined":("Autorização recusada","declined"),
+    "whatsapp_optin_granted":("Autorizou, sem contato concluído","granted"),
+    "whatsapp_text_productive":("Resultado produtivo por texto","productive"),
+    "whatsapp_text_unproductive":("Conversa por texto sem resultado","unproductive"),
+    "productive":("Contato produtivo","productive"),"unproductive":("Contato improdutivo","unproductive"),
+    "invalid_number":("Número inválido ou inexistente","invalid"),"number_not_found":("Número inválido ou inexistente","invalid"),
+    "voicemail":("Caixa postal identificada","voicemail"),"answering_machine":("Caixa postal identificada","voicemail"),
+    "call_screening":("Triagem automática identificada","screening"),"screening_detected":("Triagem automática identificada","screening"),
+    "blocked_by_user":("Bloqueio pelo usuário registrado","user_blocked"),"user_blocked":("Bloqueio pelo usuário registrado","user_blocked"),
+    "network_failure":("Falha de rede identificada","network"),"route_failure":("Falha de rede identificada","network"),
+}
+
+
+def non_contact_reason(row):
+    result=str(row.get("contact_result","")).strip().lower()
+    mapped=NON_CONTACT_REASONS.get(result)
+    if mapped and mapped[1] in ["excluded_technical","excluded_success"]: return mapped
+    # Retornos numéricos SIP nunca provam caixa postal, screening ou bloqueio pessoal.
+    specific={"invalid_number","number_not_found","voicemail","answering_machine","call_screening","screening_detected","blocked_by_user","user_blocked","network_failure","route_failure"}
+    for field in ["contact_result","hangup_cause","hang_cause","analyzer_action"]:
+        token=str(row.get(field,"")).strip().lower()
+        if token in specific: return NON_CONTACT_REASONS[token]
+    return mapped or ("Motivo não identificado","unknown")
+
+
+def non_contact_diagnosis(frame):
+    _,_,cohort=outcome_frames(frame)
+    attempts=frame[frame["contact_id"].isin(cohort["contact_id"])].copy()
+    counts={};people={};exclusions={"excluded_technical":0,"excluded_success":0}
+    for _,row in attempts.iterrows():
+        label,kind=non_contact_reason(row)
+        if kind in exclusions:
+            exclusions[kind]+=1;continue
+        counts[kind]=counts.get(kind,0)+1
+        people.setdefault(kind,set()).add(row["contact_id"])
+    labels={kind:label for label,kind in NON_CONTACT_REASONS.values()};labels["unknown"]="Motivo não identificado"
+    executed=sum(counts.values())
+    ranked=sorted(counts.items(),key=lambda item:(-item[1],item[0]))
+    major=[(kind,n) for kind,n in ranked if n/max(1,executed)>=0.04][:5]
+    if not major and ranked: major=ranked[:1]
+    chart=[{"key":kind,"label":labels[kind],"count":n,"percent":n/max(1,executed)*100,"people":len(people[kind])} for kind,n in major]
+    other=executed-sum(r["count"] for r in chart)
+    if other: chart.append({"key":"other","label":"Outros motivos","count":other,"percent":other/max(1,executed)*100,"people":None})
+    insights=[]
+    if counts.get("invalid",0): insights.append("Valide os telefones e compare a origem dos leads. Priorize fontes com contatos válidos.")
+    if counts.get("ring",0)+counts.get("busy",0): insights.append("Teste horários e uma abordagem que esclareça quem está ligando e o motivo. Compare atendimento por público e canal.")
+    if counts.get("declined",0)+counts.get("no_reply",0): insights.append("Revise a mensagem de autorização, a oferta e o público. Respeite recusas e ofereça ao cliente escolha de canal e horário.")
+    if counts.get("granted",0): insights.append("Priorize o público que já autorizou e confirme sua preferência de canal e horário para transformar interesse em conversa.")
+    if not insights: insights.append("Compare os motivos por público, origem dos leads e canal antes de mudar a abordagem. Os resultados disponíveis ainda não apontam a melhor ação.")
+    return {"unique":len(cohort),"attempts":executed,"counts":counts,"people":{k:len(v) for k,v in people.items()},"excluded":exclusions,"chart":chart,"insights":insights[:3]}
+
+
+def render_non_contact_panel(frame,selected):
+    d=non_contact_diagnosis(frame)
+    if not d["unique"]:
+        return
+    colors={"ring":"#168bff","busy":"#72a0f6","unreachable":"#983bff","filtered":"#f33b91","screening":"#f33b91","user_blocked":"#f33b91","invalid":"#f7a95b","no_reply":"#00cdb2","declined":"#e99055","granted":"#00cdb2","other":"#7891b4","unknown":"#7891b4"}
+    bars=[]
+    for r in d["chart"]:
+        tooltip=f'{r["people"]} números neste motivo; o mesmo número pode ter outros motivos.' if r["people"] is not None else 'Motivos menos frequentes agrupados.'
+        bars.append(f'<div class="nc-reason" title="{esc(tooltip)}"><div><span>{esc(r["label"])}</span><b>{br(r["count"])} <small>· {br(r["percent"],1)}%</small></b></div><div class="nc-track"><i style="width:{r["percent"]:.2f}%;background:{colors.get(r["key"],"#7891b4")}"></i></div></div>')
+    counts=d["counts"]
+    facts=[]
+    if counts.get("ring"): facts.append(f'<b>{br(counts["ring"])} tentativas tocaram sem atendimento</b>, em {br(d["people"]["ring"])} números. Não prova recusa ou desinteresse.')
+    if counts.get("busy"): facts.append(f'<b>{br(counts["busy"])} encontraram o destino ocupado.</b> Isso difere de tocar sem atender.')
+    if counts.get("unreachable"): facts.append(f'<b>{br(counts["unreachable"])} não alcançaram o destino.</b> Pode ser indisponibilidade ou rede; a causa não está confirmada.')
+    if counts.get("network") or d["excluded"]["excluded_technical"]: facts.append(f'<b>Condições técnicas:</b> {br(counts.get("network",0))} falhas de rede identificadas e {br(d["excluded"]["excluded_technical"])} registros descartados. Descartes não contam como discagens executadas.')
+    if counts.get("filtered") or counts.get("screening") or counts.get("user_blocked"):
+        facts.append(f'<b>Filtros e bloqueios:</b> {br(counts.get("filtered",0))} filtros sem mecanismo identificado; {br(counts.get("screening",0))} registros explícitos de triagem automática; {br(counts.get("user_blocked",0))} registros explícitos de bloqueio pelo usuário. Filtro genérico não comprova os dois últimos.')
+    if counts.get("voicemail"): facts.append(f'<b>{br(counts["voicemail"])} caixas postais identificadas</b> nos registros deste grupo.')
+    else: facts.append("<b>Caixa postal:</b> sem identificação específica nos registros deste grupo; não é possível estimar a quantidade.")
+    if counts.get("invalid"): facts.append(f'<b>{br(counts["invalid"])} tentativas com número inválido ou inexistente registrado.</b> Vale revisar a origem e a qualidade desses leads.')
+    if counts.get("no_reply") or counts.get("declined") or counts.get("granted"):
+        facts.append(f'<b>Autorização WhatsApp:</b> {br(counts.get("no_reply",0))} sem resposta; {br(counts.get("declined",0))} recusas; {br(counts.get("granted",0))} autorizações sem contato concluído. Consentimento não equivale a atendimento.')
+    if not facts: facts.append("Os registros não detalham a causa do não contato com segurança.")
+    caveat="Caixa postal, triagem automática e bloqueio pelo cliente só são contados quando explicitamente identificados. A ausência dessa identificação não significa ausência do evento. Contatos já classificados como improdutivos ficam fora deste grupo."
+    body='<div class="nc-body"><div class="nc-chart"><div class="nc-intro"><b>'+br(d["unique"])+' números não contactados</b><span>'+br(d["attempts"])+' tentativas consideradas</span></div>'+(''.join(bars) if bars else '<p>Este grupo contém somente registros descartados, sem tentativas executadas identificadas.</p>')+'<div class="nc-foot">Percentuais sobre tentativas. Pessoas podem aparecer em mais de um motivo. '+br(sum(d["excluded"].values()))+' registros descartados fora da distribuição.</div></div><div class="nc-reading"><h3>O que os dados mostram</h3><ul>'+''.join('<li>'+f+'</li>' for f in facts)+'</ul><h3>Onde agir no negócio</h3><ul class="nc-actions">'+''.join('<li>'+esc(t)+'</li>' for t in d["insights"])+'</ul><div class="nc-foot">'+caveat+'</div></div></div>'
+    st.markdown("""<style>
+.nc-panel{margin:14px 0;background:linear-gradient(125deg,#061c35,#03162b);}.nc-body{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.25fr);gap:26px;padding:18px;}.nc-intro{display:flex;flex-direction:column;gap:4px;margin-bottom:18px;}.nc-intro b{font-size:21px;}.nc-intro span{color:#9fbbdf;font-size:11px;}.nc-reason{margin:0 0 13px;}.nc-reason>div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:12px;}.nc-reason b{white-space:nowrap;font-size:13px;}.nc-reason small{color:#a9bfdf;font-size:11px;}.nc-track{height:8px;background:#123454;border-radius:5px;margin-top:7px;overflow:hidden;}.nc-track i{display:block;height:100%;border-radius:5px;}.nc-reading h3{font-size:14px;margin:0 0 9px;color:#edf4ff;}.nc-reading ul{margin:0 0 15px;padding-left:16px;font-size:12px;line-height:1.55;color:#c4d6ed;}.nc-reading li{margin-bottom:7px;}.nc-reading b{color:#f9f9fa;}.nc-actions li::marker{color:#00cdb2;}.nc-foot{font-size:10px;line-height:1.5;color:#95b0d2;}
+@media(max-width:900px){.nc-body{grid-template-columns:1fr;gap:18px;}}@media(max-width:560px){.nc-body{padding:13px;}.nc-intro b{font-size:18px;}.nc-reason>div:first-child{font-size:11px;}}
+</style>""",unsafe_allow_html=True)
+    st.markdown('<div class="cockpit">'+panel("Por que não conseguimos contato?",body,'<span class="tag">'+esc(selected)+'</span>',"nc-panel")+'</div>',unsafe_allow_html=True)
+
+
 def analytic_attempts(df):
     names = {
         "attempt_timestamp":"Data e hora", "date":"Data", "attempt_id":"Tentativa", "contact_id":"Contato",
@@ -1346,6 +1437,8 @@ def analytic_attempts(df):
     for flag in ["productive_flag","unproductive_flag","answered_flag","template_sent_flag","template_replied_flag"]:
         if flag in result:
             result[flag] = result[flag].map({0:"Não",1:"Sim"}).fillna("—")
+    if "contact_result" in result:
+        result["contact_result"]=result["contact_result"].map(lambda value:NON_CONTACT_REASONS.get(str(value).strip().lower(),("Motivo não identificado",None))[0])
     return result.rename(columns=names)
 
 
@@ -1872,6 +1965,7 @@ with st.container(key="kpi_grid"):
             with st.container(key=f"kpi_click_{index}"):
                 st.markdown('<div class="cockpit">'+kpi_html[index]+'</div>',unsafe_allow_html=True)
                 st.button(KPI_LABELS[index],key=f"open_indicator_{index}",on_click=open_indicator,args=(index,),use_container_width=True)
+render_non_contact_panel(filtered,selected)
 render_indicator_detail(filtered,selected,date_start,date_end)
 
 summary = [(name, metrics(period_df[period_df["strategy_name"].eq(name)])) for name in names]
