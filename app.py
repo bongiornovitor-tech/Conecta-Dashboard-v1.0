@@ -379,12 +379,13 @@ def render_monthly_billing(profile,costs):
     prod_cost="—" if usage["missing_rates"] else money(usage["productive_cost"])
     improd_cost="—" if usage["missing_rates"] else money(usage["unproductive_cost"])
     st.markdown("""<style>
-.billing-top{display:flex;justify-content:flex-end;margin:0 0 14px;}
-.billing-summary{width:min(590px,100%);padding:13px 16px;border:1px solid #205076;border-radius:12px;background:linear-gradient(135deg,#07213a,#03162a);font-size:12px;}
+.billing-top{display:block;width:100%;margin:4px 0 8px;}
+.billing-summary{width:100%;padding:12px 16px;border:1px solid #205076;border-radius:12px;background:linear-gradient(135deg,#07213a,#03162a);font-size:12px;}
 .billing-header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;}.billing-header b{font-size:13px;}.billing-header small{color:#94b4db;}
-.billing-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;}.billing-item strong{display:block;font-size:11px;margin-bottom:7px;}.billing-item b{font-size:18px;display:block;white-space:nowrap;}.billing-item small{display:block;color:#a7bfdf;font-size:10px;margin-top:5px;}
+.billing-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:start;}.billing-item{min-width:0;padding:0 18px;border-left:1px solid #1d3c5c;}.billing-item:first-child{padding-left:0;border-left:0;}.billing-item:last-child{padding-right:0;}.billing-item strong{display:block;font-size:11px;line-height:1.4;min-height:16px;margin-bottom:7px;}.billing-item b{font-size:clamp(15px,1.45vw,21px);display:block;white-space:nowrap;}.billing-item small{display:block;color:#a7bfdf;font-size:10px;margin-top:5px;}
 .allowance-track{position:relative;height:9px;background:#15385b;border-radius:5px;margin:9px 0;}.allowance-track i{display:block;height:100%;border-radius:5px;}.allowance-track>span{position:absolute;top:-4px;bottom:-4px;border-left:2px solid #f9f9fa;}.allowance-label{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#c8d8f3;}.billing-footer{border-top:1px solid #1d3c5c;padding-top:8px;margin-top:12px;font-size:10px;color:#a7bfdf;}.billing-footer b{color:#f9f9fa;font-size:12px;}
-@media(max-width:560px){.billing-summary{padding:12px;}.billing-grid{gap:12px;}.billing-item b{font-size:16px;}}
+@media(max-width:1050px){.billing-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 0;}.billing-item:nth-child(3){border-left:0;padding-left:0;}.billing-item:nth-child(2){padding-right:0;}.billing-item b{font-size:20px;}}
+@media(max-width:560px){.billing-summary{padding:12px;}.billing-header{flex-wrap:wrap;gap:5px;}.billing-grid{grid-template-columns:1fr;gap:12px;}.billing-item{padding:0!important;border-left:0;}.billing-item b{font-size:19px;}.billing-footer{line-height:1.5;}}
 </style>""",unsafe_allow_html=True)
     total_label="—" if usage["missing_rates"] else money(total)
     body=f'<div class="cockpit billing-top"><aside class="billing-summary"><div class="billing-header"><b>Uso mensal Conecta+ <span class="tag">Demonstração</span></b><small>{now.strftime("%d/%m/%Y")} · mês atual</small></div><div class="billing-grid"><div class="billing-item"><strong>Telefonia · minutos consumidos</strong>{allowance_bar(usage["minutes"],"min")}</div><div class="billing-item"><strong>Consentimentos · disparos</strong>{allowance_bar(usage["optins"],"disparos")}<small>{br(usage["optin_extra"])} adicionais · {money(usage["optin_cost"])} · tarifa cadastrada</small></div><div class="billing-item"><strong>Minutos produtivos adicionais</strong><b>{br(usage["productive_extra"],1)} min · {prod_cost}</b></div><div class="billing-item"><strong>Minutos improdutivos adicionais</strong><b>{br(usage["unproductive_extra"],1)} min · {improd_cost}</b></div></div><div class="billing-footer">Adicionais simulados: <b>{total_label}</b> · Todas as estratégias · Sem mensalidade, Meta, Hiya e templates de terceiros. Franquia global abatida por dia; rateio proporcional no dia de esgotamento. Valores demonstrativos, sem efeito na fatura real.</div></aside></div>'
@@ -1782,6 +1783,8 @@ if "strategy_id" in df_fact:
 names = list(dict.fromkeys(df_strat["strategy_name"].dropna().tolist()+df_fact["strategy_name"].dropna().tolist()))
 names.sort(key=lambda n: (n != "Custo Eficiente", n != "Máximo Contato", str(n)))
 valid_dates = df_fact["_date"].dropna()
+monthly_usage=render_monthly_billing(billing_profile,df_costs)
+
 f1, f2, f3 = st.columns([1.1, 1.1, 2.8])
 with f1:
     if valid_dates.empty:
@@ -1831,8 +1834,6 @@ for i, (label, kind, color) in enumerate(zip(labels, ["users", "off", "phone", "
         desc = "vs. "+(date_start-pd.Timedelta(days=days)).strftime("%d/%m")+" a "+(date_start-pd.Timedelta(days=1)).strftime("%d/%m")
     trend = spark([row[i] for row in daily], color, f"spark-{i}")
     kpi_html.append(f'<article class="kpi"><div class="kpi-head">{icon(kind,color)}<div><div class="kpi-label">{label}</div><div class="kpi-value" style="--kpi-size:{100/(max(1,len(value))*0.65):.2f}cqw">{value}</div></div></div><div class="kpi-foot"><div><div class="delta" style="color:{delta_color}">{delta or "&nbsp;"}</div><div class="sub">{desc}</div></div>{trend}</div></article>')
-
-monthly_usage=render_monthly_billing(billing_profile,df_costs)
 
 # O botão transparente cobre o card inteiro e preserva acesso por teclado.
 st.markdown("""<style>
