@@ -46,7 +46,7 @@ import altair as alt
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Conecta+ Strategy Cockpit", page_icon="☎", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Conecta+ Dashboard", page_icon="☎", layout="wide", initial_sidebar_state="expanded")
 SHEET_URL = os.getenv("CONECTA_SHEET_URL", "https://docs.google.com/spreadsheets/d/16qSTNR6z920Rp0LMdwpBp1pcKvfXZp-jSjUmfxIN95A/export?format=xlsx")
 COLORS = ["#168bff", "#983bff", "#00dcc0", "#8aa8ff", "#f33b91"]
 COST_LABELS = {
@@ -502,7 +502,7 @@ Explique o raciocínio: o que observamos, o que pode significar e qual decisão 
 Use frases curtas, comparações claras e percentuais apenas quando calculáveis.
 Não enumere categorias técnicas. Agrupe motivos e explique a consequência comercial.
 Confiança qualitativa: alta, média ou baixa, não percentuais inventados.
-A linha do tempo deve ser plano de teste/validação em 7, 14 e 30 dias, NÃO previsão
+A linha do tempo só deve existir quando solicitada, com prazos pertinentes ao pedido, NÃO previsão
 numérica. Sem experimento/modelo estatístico, ganho projetado é não estimado.
 Não sugira que os dados provam comportamento real; a base pode ser demonstrativa.
 Retorne exclusivamente JSON no formato solicitado, sem HTML nem markdown.
@@ -758,8 +758,8 @@ WhatsApp texto só existe como resposta ao pedido de autorização para WhatsApp
 Pessoas e tentativas são métricas diferentes; não some pessoas entre canais. Resultado produtivo não prova venda.
 Custos demonstrativos são recalculados pelas tarifas atuais; origem preservada. Cadência de bilhetagem 30/6 é um conceito financeiro permitido; não recomende cadência de rediscagem. Registros excluídos não são tentativas executadas.
 Compare grupos como observação, sem causalidade. Não exponha campos de banco, códigos ou termos técnicos.
-Dê até 3 recomendações com evidência numérica disponível. Confiança: alta, média ou baixa.
-Linha do tempo: testes e validações em 7, 14 e 30 dias; ganhos futuros não estimados.
+Responda exclusivamente ao pedido atual. Recomendações somente se solicitadas explicitamente, no máximo 3, pertinentes à pergunta. Sem pedido, recomendacoes deve ser [].
+Linha do tempo somente quando o usuário pedir cronograma ou plano de teste. Sem pedido, linha_do_tempo deve ser []. Não imponha prazos de 7, 14 ou 30 dias. Não estime ganhos futuros sem evidência.
 Retorne somente JSON com todos os campos do formato exigido. No resumo use 2–4 bullets Markdown separados por quebras de linha. Sem HTML. Nunca divulgue preços comerciais do Conecta+, Meta ou Hiya; encaminhe perguntas de preço ao responsável comercial da Nuveto. Custos históricos do dashboard podem ser analisados. Distinga classificação por duração para bilhetagem de resultado de negócio.
 """
 
@@ -967,7 +967,7 @@ DASHBOARD_KNOWLEDGE = {
     "whatsapp": "Ações configuráveis: Telefonia Tradicional, Branded Call e WhatsApp Call. WhatsApp texto nunca é primeira ação ou etapa independente: só ocorre quando a pessoa responde por texto ao pedido de autorização para WhatsApp Call. O bot esclarece a intenção e busca agendar no canal preferido. Envio de autorização não é contato produtivo nem consentimento; chamar pelo WhatsApp exige autorização.",
     "dados": "Fonte do dashboard: dashboard_fact, uma linha por tentativa. interaction_attempt guarda tentativas de origem; strategy e strategy_steps definem estratégias; cost_parameters guarda tarifas. Atualizar uma aba não sincroniza automaticamente as outras. Dados são fictícios; agosto foi gerado com 500 pessoas, 2.500 tentativas, 200 contactados (150 improdutivos e 50 produtivos) e 300 sem contato no mês completo 01–30/08/2026. Grupos contactados são divisões, não etapas sequenciais. Recortes menores e estratégias variam. Custos de agosto usam parâmetros atuais e cobrança simulada 30/6 em chamadas atendidas; não comprovam tarifas reais de agosto. DDD/origem/segmento fictícios não provam correlações comerciais.",
     "campos": "Identificadores ligam pessoa, tentativa, chamada e estratégia; não são métricas. Canal realizado pode ser texto em fluxo de chamada planejada. Data/hora indica quando a tentativa ocorreu; contador de repetições começa em zero. Duração está em segundos. Indicadores de atendimento, produtivo, improdutivo e filtragem descrevem cada tentativa. Resultado do contato resume o desfecho; retorno SIP/Khomp descreve sinalização e exige dicionário validado, não prova recusa nem número inválido sozinho. Consentimento antes/depois e indicadores de template enviado, respondido e autorização gerada descrevem a jornada WhatsApp. ANI é identificação de origem. Ação do analisador é interpretação registrada, não recomendação de negócio.",
-    "premissas": "IA usa resumos agregados, sem telefone ou ID individual. Registros excluídos após sucesso ou por exclusão técnica ficam fora da comparação de tentativas executáveis; KPI considera o recorte completo. Não somar pessoas de grupos sobrepostos. Evidência observacional não prova causalidade. Não inventar recusa, validade, conversão ou ganho futuro. Recomendações só de negócio; ajustes técnicos ficam com Nuveto. Linha do tempo é teste em 7, 14 e 30 dias, sem previsão numérica. Cache dura uma hora na mesma sessão e só reutiliza mesma pergunta e dados.",
+    "premissas": "IA usa resumos agregados, sem telefone ou ID individual. Registros excluídos após sucesso ou por exclusão técnica ficam fora da comparação de tentativas executáveis; KPI considera o recorte completo. Não somar pessoas de grupos sobrepostos. Evidência observacional não prova causalidade. Não inventar recusa, validade, conversão ou ganho futuro. Recomendações só de negócio; ajustes técnicos ficam com Nuveto. Linha do tempo e recomendações só aparecem se explicitamente solicitadas; sem previsão numérica. Cache dura uma hora na mesma sessão e só reutiliza mesma pergunta e dados.",
 }
 
 
@@ -1061,7 +1061,7 @@ def local_dashboard_explanation(context, prompt):
     return {"resumo":answer,"recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
 
 
-AI_SYSTEM += "\nNunca informe preços comerciais ou tarifas do Conecta+, Meta ou Hiya. Oriente procurar o responsável comercial da Nuveto. Pode explicar franquias e exclusões e analisar custos históricos do dashboard. No resumo use bullets Markdown com quebras de linha. Responda à pergunta mais recente com base na conversa anterior; não repita a resposta anterior. Recomendações e linha do tempo podem ficar vazias em esclarecimentos. Distinga bilhetagem por duração de resultado do contato."
+AI_SYSTEM += "\nNunca informe preços comerciais ou tarifas do Conecta+, Meta ou Hiya. Oriente procurar o responsável comercial da Nuveto. Pode explicar franquias e exclusões e analisar custos históricos do dashboard. No resumo use bullets Markdown com quebras de linha. Responda à pergunta mais recente com base na conversa anterior; não repita a resposta anterior. Recomendações e linha do tempo DEVEM ficar vazias quando não forem solicitadas. Não inclua dicas ou ações genéricas no resumo. Distinga bilhetagem por duração de resultado do contato."
 
 def conversation_context(history):
     """Tela guarda respostas completas; entrada preserva escopo e detalhes úteis em síntese."""
@@ -1081,6 +1081,23 @@ def conversation_context(history):
 def queue_ai_question():
     question=st.session_state.get("ai_followup","").strip()
     if question: st.session_state.ai_pending_question=question
+
+
+def requested_answer_sections(prompt):
+    q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    actions=bool(re.search(r"recomen|sugest|sugira|sugerir|proponha|plano de acao|quais acoes|que acoes|o que (?:devo |posso )?fazer|o que (?:devo |posso )?mudar",q))
+    timeline=bool(re.search(r"linha do tempo|cronograma|plano de implementacao|plano de teste|plano de validacao|em (?:7|14|30) dias|quando implementar",q))
+    return actions,timeline
+
+
+def scope_ai_answer(result,prompt):
+    result=json.loads(json.dumps(result))
+    actions,timeline=requested_answer_sections(prompt)
+    if not actions: result["recomendacoes"]=[]
+    if not timeline: result["linha_do_tempo"]=[]
+    # Premissas técnicas da síntese ficam no diagnóstico, não em toda resposta.
+    result.pop("premissas_da_sintese",None)
+    return result
 
 
 def render_ai_answer(data):
@@ -1125,7 +1142,7 @@ def run_ai_analysis(context, prompt):
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"conversation-v8"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"question-only-v9"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -1137,12 +1154,14 @@ def run_ai_analysis(context, prompt):
         summary, premises = compact_ai_context(context, prompt)
         def messages_for(value, recovery=False):
             brevity = "\nComplete todos os campos do JSON. Resumo em 2–4 bullets com quebras de linha, até 700 caracteres. Cada campo de recomendação até 160 caracteres. Cada campo da linha do tempo até 120 caracteres. Até 2 limitações curtas."
-            if recovery: brevity += "\nNesta resposta, use somente 1 recomendação principal e 3 etapas curtas; mantenha todas as propriedades obrigatórias."
+            if recovery: brevity += "\nResponda brevemente à pergunta atual; mantenha todas as propriedades obrigatórias. Listas não solicitadas ficam vazias."
+            actions,timeline=requested_answer_sections(prompt)
+            brevity += "\nSeções permitidas nesta pergunta: recomendações="+str(actions)+", linha do tempo="+str(timeline)+". Quando False, a lista correspondente deve ser vazia. Não acrescente dicas genéricas no resumo. Limitações somente se necessárias para responder à pergunta."
             scoped=dict(value)
             knowledge=dict(scoped.get("conhecimento_do_dashboard",{}))
             conversation=knowledge.pop("conversa_anterior",[])
             scoped["conhecimento_do_dashboard"]=knowledge
-            messages=[{"role":"system","content":GROQ_BUSINESS_SYSTEM + brevity + "\nResponda à PERGUNTA MAIS RECENTE usando os turnos anteriores para resolver referências. Não repita a análise anterior: explique somente o que foi pedido agora. Recomendações e linha do tempo podem ser listas vazias em esclarecimentos. Se o pedido for ambíguo, faça uma pergunta curta. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":"Dados e conhecimento para esta conversa: "+json.dumps(business_context(scoped),ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
+            messages=[{"role":"system","content":GROQ_BUSINESS_SYSTEM + brevity + "\nResponda à PERGUNTA MAIS RECENTE usando os turnos anteriores para resolver referências. Não repita a análise anterior: explique somente o que foi pedido agora. Recomendações e linha do tempo DEVEM ser listas vazias sem pedido explícito; responda somente à pergunta. Se o pedido for ambíguo, faça uma pergunta curta. Se um recorte não foi enviado, não tire conclusões sobre ele."},{"role":"user","content":"Dados e conhecimento para esta conversa: "+json.dumps(business_context(scoped),ensure_ascii=False,separators=(",",":"),allow_nan=False)}]
             for turn in conversation:
                 messages.extend([{"role":"user","content":turn["pergunta"]},{"role":"assistant","content":turn["resposta"]}])
             messages.append({"role":"user","content":prompt})
@@ -1159,6 +1178,7 @@ def run_ai_analysis(context, prompt):
             raise AIAnalysisError("A resposta não veio no formato esperado. Tente novamente.") from None
     if provider == "groq":
         result["premissas_da_sintese"] = premises
+    result=scope_ai_answer(result,prompt)
     cache[cache_key] = {"time":time.time(),"result":result}
     while len(cache) > 20: cache.pop(next(iter(cache)))
     return result
@@ -1222,7 +1242,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing
                     scope=turn["scope"]
                     st.caption("Recorte desta resposta: "+str(scope))
                 if turn.get("data"):
-                    render_ai_answer(turn["data"])
+                    render_ai_answer(scope_ai_answer(turn["data"],turn["pergunta"]))
                 else:
                     st.info(turn.get("erro","Resposta ainda não disponível."))
         with st.form("ai_conversation_form",clear_on_submit=True):
@@ -1381,7 +1401,7 @@ def render_indicator_detail(df, selected_strategy, start, end):
             st.warning("Há tentativas sem data válida. Elas não entram no gráfico temporal.")
 
 
-hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>| Conecta+</span><small>Inteligência que conecta<br>os seus resultados.</small></div><div><h1>Conecta+ <span>Strategy Cockpit</span></h1><p>Efetividade, custo e performance por estratégia</p></div><div class="use-cases">' + "".join(f'<div class="use-case">{icon(kind,"#4759ff")}<div><b>{name}</b><small>{desc}</small></div></div>' for kind, name, desc in [("chat", "Marketing", "Mais oportunidades"), ("bars", "Vendas", "Mais conversões"), ("bag", "Cobrança", "Mais resultados")]) + '</div></div></div>'
+hero = '<div class="cockpit"><div class="hero"><div class="brand">Nuveto <span>| Conecta+</span><small>Inteligência que conecta<br>os seus resultados.</small></div><div><p>Efetividade, custo e performance por estratégia</p></div><div class="use-cases">' + "".join(f'<div class="use-case">{icon(kind,"#4759ff")}<div><b>{name}</b><small>{desc}</small></div></div>' for kind, name, desc in [("chat", "Marketing", "Mais oportunidades"), ("bars", "Vendas", "Mais conversões"), ("bag", "Cobrança", "Mais resultados")]) + '</div></div></div>'
 st.markdown(hero, unsafe_allow_html=True)
 try:
     with st.spinner("Carregando indicadores…"):
