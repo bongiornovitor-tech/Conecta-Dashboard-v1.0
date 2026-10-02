@@ -911,7 +911,7 @@ def groq_request(messages, structured=True, output_limit=3000):
 
 def compact_ai_context(context, prompt, minimal=False):
     """Preserva KPIs e filtros; seleciona detalhes por volume, sem somar pessoas entre grupos."""
-    core = ["controle_mensal_demo","filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin","comparacao_periodos","conhecimento_do_dashboard"]
+    core = ["proximas_acoes_nao_contactados","controle_mensal_demo","filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin","comparacao_periodos","conhecimento_do_dashboard"]
     summary = {k:context[k] for k in core if k in context}
     premises = ["Mantive o período e a estratégia selecionados, com os indicadores completos. Comparações indicam padrões, sem comprovar causa ou ganho futuro."]
     summary["estrategias"] = [{k:row[k] for k in ["nome","objetivo","acoes"] if k in row} for row in context.get("estrategias",[])][:8]
@@ -948,7 +948,9 @@ def compact_ai_context(context, prompt, minimal=False):
     if minimal or omitted:
         premises.append("A análise usa uma síntese dos detalhes, preservando os totais do dashboard e o recorte escolhido.")
     if minimal:
-        summary = {k:v for k,v in summary.items() if k in ["controle_mensal_demo","filtros","kpis_dashboard","comparacao_periodos","conhecimento_do_dashboard"]}
+        summary = {k:v for k,v in summary.items() if k in ["proximas_acoes_nao_contactados","controle_mensal_demo","filtros","kpis_dashboard","comparacao_periodos","conhecimento_do_dashboard"]}
+        actions=summary.get("proximas_acoes_nao_contactados",{})
+        if actions:actions={**actions,"acoes":[{"acao":a["acao"],"numeros":a["numeros"]} for a in actions.get("acoes",[])]};summary["proximas_acoes_nao_contactados"]=actions
         knowledge=summary.get("conhecimento_do_dashboard",{})
         # Preserva assunto e premissas essenciais; no máximo dois turnos resumidos.
         if "conversa_anterior" in knowledge:
@@ -1142,7 +1144,7 @@ def run_ai_analysis(context, prompt):
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"question-only-v9"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"history-actions-v10"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -1196,7 +1198,7 @@ def set_ai_prompt(value):
     st.session_state.ai_prompt=value
 
 
-def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing=None):
+def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing=None,action_summary=None):
     if not st.session_state.get("ai_open"):
         return
     context=build_ai_context(df,strategies,steps,selected,start,end)
@@ -1206,6 +1208,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None,billing
         context["controle_mensal_demo"]={k:v for k,v in billing.items() if not k.endswith("cost")}
         context["controle_mensal_demo"]["data_referencia"]=datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y")
         context["controle_mensal_demo"]["premissa"]="Demonstração independente dos filtros, acumulada até hoje; franquias globais de 50 mil minutos tradicionais e 50 mil opt-ins. Não é fatura real."
+    if action_summary is not None: context["proximas_acoes_nao_contactados"]=action_summary
     with st.sidebar:
         if st.button("Fechar IA ×",key="close_ai",use_container_width=True):
             st.session_state.ai_open=False
@@ -1464,6 +1467,192 @@ def render_non_contact_panel(frame,selected):
 </style>""",unsafe_allow_html=True)
     st.markdown('<div class="cockpit">'+panel("Não contactados · motivos por canal",body,'<span class="tag">'+esc(selected)+'</span>',"nc-panel")+'</div>',unsafe_allow_html=True)
 
+
+# Camada de decisão reutilizável: não altera resultados ou flags das tentativas.
+ACTION_RULES={"repeat":3,"invalid":2,"technical":2}
+ACTION_INFO={
+ "REMOVE":("Higienizar a base","Número inválido ou inexistente","Valide a fonte e retire o número da lista ativa após confirmar os dados.","#f7a95b"),
+ "INVESTIGATE_TECHNICAL":("Avaliar conectividade com a Nuveto","Possível indisponibilidade de conectividade","Separe esse grupo da avaliação de interesse e encaminhe o diagnóstico à equipe Nuveto.","#8a8eff"),
+ "RETRY":("Reavaliar horário de contato","Há evidência de número válido","Teste um horário ou dia adequado ao perfil e compare o atendimento.","#168bff"),
+ "USE_IDENTIFIED_CALL":("Testar voz identificada","Baixa resposta na telefonia tradicional","Teste identificação e motivo do contato por branded ou WhatsApp com autorização.","#00bffc"),
+ "REVIEW_SEGMENTATION":("Reavaliar público, oferta e abordagem","Baixa resposta mesmo com identificação confirmada","Revise origem do lead, público, oferta, mensagem e horário; não presuma falta de interesse.","#f33b91"),
+ "CHANGE_CHANNEL":("Combinar canais conforme o interesse","Há sinal de interação em outro canal","Aproveite o consentimento ou a interação para confirmar o canal e o horário preferidos.","#00cdb2"),
+ "STOP_AFTER_SUCCESS":("Avançar na jornada","Contato já realizado no histórico","Avance para a etapa seguinte, sem tratar os descartes após sucesso como falhas.","#31c8a6"),
+ "COLLECT_MORE_EVIDENCE":("Validar antes de decidir","Evidência ainda insuficiente","Confirme dados e preferências antes de concluir que há falha técnica, rejeição ou número inválido.","#7891b4"),
+}
+SIGNAL_ALIASES={
+ "ringing":"ring","rang_not_answered":"ring","no_answer":"ring","ring_no_answer":"ring",
+ "voicemail":"voicemail","answering_machine":"voicemail","voicemail_direct":"voicemail_direct",
+ "rang_then_voicemail":"voicemail_rang","voicemail_after_ringing":"voicemail_rang",
+ "busy":"busy","filtered":"filtered","call_screening":"screening","screening_detected":"screening",
+ "blocked_by_user":"blocked","user_blocked":"blocked",
+ "invalid_number":"invalid","number_not_found":"invalid","number_not_allocated":"invalid","nonexistent_number":"invalid","unassigned_number":"invalid",
+ "unreachable":"unreachable","out_of_coverage":"unreachable","temporary_failure":"technical","network_error":"technical","network_failure":"technical","route_failure":"technical","technical_exclusion":"technical_exclusion",
+ "productive":"success","whatsapp_text_productive":"success","human_answer":"human","unproductive":"connected_unproductive","whatsapp_text_unproductive":"digital",
+ "whatsapp_optin_granted":"granted","whatsapp_optin_declined":"declined","whatsapp_optin_no_reply":"no_reply","excluded_after_success":"excluded_success",
+}
+
+
+def observed_flag(row,field):
+    value=row.get(field)
+    if value is None or pd.isna(value):return None
+    token=str(value).strip().lower()
+    if token in ["1","1.0","true","sim","yes"]:return True
+    if token in ["0","0.0","false","nao","não","no"]:return False
+    return None
+
+
+def normalize_attempt_signal(row):
+    result=str(row.get("contact_result","")).strip().lower()
+    signal=SIGNAL_ALIASES.get(result,"unknown")
+    if signal in ["technical_exclusion","excluded_success"]:return signal
+    if observed_flag(row,"productive_flag") is True or signal=="success":return "success"
+    # Somente nomes explícitos; não interpretar códigos SIP sem dicionário validado.
+    detailed={"invalid","voicemail","voicemail_direct","voicemail_rang","screening","blocked","technical"}
+    for field in ["hangup_cause","hang_cause","amd_result","analyzer_action"]:
+        candidate=SIGNAL_ALIASES.get(str(row.get(field,"")).strip().lower())
+        if candidate in detailed:
+            if candidate in ["invalid","technical"] and signal in ["ring","voicemail","voicemail_direct","voicemail_rang","human","connected_unproductive","digital","granted","declined"]:continue
+            return candidate
+    return signal
+
+
+def identification_confirmed(row):
+    for field in ["branded_impression_flag","logo_displayed_flag","caller_identity_verified_flag","push_delivered_flag","identified_call_flag"]:
+        flag=observed_flag(row,field)
+        if flag is not None:return flag
+    # Consentimento não comprova entrega de ligação; este flag confirma apenas o canal WhatsApp.
+    return str(row.get("channel","")).lower() in ["whatsapp_call","app_call","web_call"]
+
+
+def classify_number_history(history):
+    sort=next((c for c in ["attempt_timestamp","attempt_datetime","_date"] if c in history),None)
+    rows=history.copy()
+    if sort:
+        rows["_history_time"]=pd.to_datetime(rows[sort],errors="coerce",utc=True)
+        rows=rows.sort_values("_history_time",kind="stable",na_position="first")
+    if "attempt_id" in rows and rows["attempt_id"].notna().all():rows=rows.drop_duplicates("attempt_id",keep="last")
+    counts={};executed=0;traditional_low=0;identified_low=0;branded_unconfirmed=0;opportunities=0;last_consent=None;success=False;closure=False;moderate=False;strong=False;digital=False;identified_attempts=0;unidentified_attempts=0;last_success=""
+    for _,row in rows.iterrows():
+        signal=normalize_attempt_signal(row);counts[signal]=counts.get(signal,0)+1
+        if signal=="excluded_success":closure=True;continue
+        if signal=="technical_exclusion":continue
+        executed+=1
+        success|=signal=="success"
+        if signal=="success":last_success=str(row.get(sort,"")) if sort else ""
+        identified_attempts+=int(identification_confirmed(row))
+        unidentified_attempts+=int(str(row.get("channel",""))=="traditional_call" and not identification_confirmed(row))
+        strong|=signal in ["success","ring","voicemail","voicemail_direct","voicemail_rang","human","connected_unproductive","digital","granted","declined"]
+        moderate|=signal in ["busy","filtered","screening","blocked"]
+        if signal in ["ring","voicemail_rang","human","success"]:opportunities+=1
+        if signal in ["digital","granted","declined"] or observed_flag(row,"template_replied_flag") is True:digital=True;strong=True
+        channel=str(row.get("channel",""))
+        if channel in ["whatsapp_call","whatsapp_text"] or str(row.get("planned_channel",""))=="whatsapp_call":
+            consent=observed_flag(row,"whatsapp_consent_after")
+            if signal=="declined":last_consent=False
+            elif signal=="granted":last_consent=True
+            elif consent is not None:last_consent=consent
+            elif last_consent is None:last_consent=observed_flag(row,"whatsapp_consent_before")
+        low=signal in ["ring","voicemail","voicemail_rang","filtered","screening","blocked"]
+        if low and identification_confirmed(row):identified_low+=1
+        elif low and channel=="traditional_call":traditional_low+=1
+        elif low and channel=="branded_call":branded_unconfirmed+=1
+    valid="VALID" if strong else "PROBABLY_VALID" if moderate else "UNKNOWN"
+    action="COLLECT_MORE_EVIDENCE";confidence="baixa";reason="O histórico não traz evidência suficiente para uma decisão específica."
+    if success or closure:
+        action="STOP_AFTER_SUCCESS";valid="VALID" if success else "PROBABLY_VALID";confidence="alta" if success else "média"
+        reason="Há resultado produtivo no histórico." if success else "A estratégia registrou encerramento após sucesso; o atendimento original não está detalhado neste histórico."
+    elif counts.get("invalid",0)>=ACTION_RULES["invalid"] and not strong and not moderate:
+        action="REMOVE";valid="INVALID";confidence="alta";reason=f'{counts["invalid"]} registros explícitos de número inválido, sem sinal de entrega ou interação.'
+    elif last_consent is True and (traditional_low+branded_unconfirmed+identified_low)>0:
+        action="CHANGE_CHANNEL";confidence="média";reason="Há autorização WhatsApp ainda registrada e chamadas sem atendimento em outros momentos. Autorização não prova preferência definitiva."
+    elif digital and last_consent is not False and (traditional_low+branded_unconfirmed)>0:
+        action="CHANGE_CHANNEL";confidence="média";reason="Houve resposta digital e baixa resposta por voz. Confirme a preferência antes de mudar a abordagem."
+    elif identified_low>=ACTION_RULES["repeat"]:
+        action="REVIEW_SEGMENTATION";confidence="média";reason=f'{identified_low} chamadas com identificação confirmada tiveram baixa resposta. Isso sugere testar público, oferta ou abordagem, sem provar desinteresse.'
+    elif traditional_low>=ACTION_RULES["repeat"]:
+        action="USE_IDENTIFIED_CALL";confidence="média";reason=f'{traditional_low} chamadas tradicionais tiveram baixa resposta, sem confirmação de identificação/contexto.'
+    elif not strong and not moderate and counts.get("technical",0)+counts.get("technical_exclusion",0)+counts.get("unreachable",0)>=ACTION_RULES["technical"] and not counts.get("invalid"):
+        action="INVESTIGATE_TECHNICAL";confidence="média";reason="Indisponibilidade ou condições técnicas se repetiram, sem evidência de entrega. A origem da falha ainda precisa de confirmação."
+    elif branded_unconfirmed>=ACTION_RULES["repeat"]:
+        reason=f'{branded_unconfirmed} tentativas branded com baixa resposta, mas sem confirmação de exibição do logo. Não há base para dizer que a identificação foi vista.'
+    elif strong and (opportunities+counts.get("busy",0)+counts.get("voicemail_direct",0)+counts.get("voicemail",0))>=2:
+        action="RETRY";confidence="média";reason=f'Há sinal de número válido; {opportunities} oportunidades claras de atendimento no histórico. Falhas anteriores não justificam classificar o número como inválido.'
+    elif moderate and counts.get("busy",0)>=2:
+        action="RETRY";confidence="média";reason="O destino esteve ocupado em mais de uma tentativa; isso não prova recusa ou falha permanente."
+    if last_consent is False and action=="CHANGE_CHANNEL":action="COLLECT_MORE_EVIDENCE"
+    return {"number_state":valid,"behavior_class":{"REMOVE":"INVALID_REPEATED","INVESTIGATE_TECHNICAL":"CONNECTIVITY_UNCERTAIN","RETRY":"VALID_LOW_OPPORTUNITIES","USE_IDENTIFIED_CALL":"LOW_RESPONSE_TO_TRADITIONAL","REVIEW_SEGMENTATION":"LOW_RESPONSE_EVEN_WHEN_IDENTIFIED","CHANGE_CHANNEL":"DIGITAL_ENGAGEMENT","STOP_AFTER_SUCCESS":"SUCCESS_OR_CAMPAIGN_CLOSURE","COLLECT_MORE_EVIDENCE":"INSUFFICIENT_EVIDENCE"}[action],"behavior_description":ACTION_INFO[action][1],"recommended_action":action,"recommendation_reason":reason,"confidence":confidence,"attempt_records":len(rows),"total_attempts":len(rows),"effective_attempts":executed,"identified_call_attempts":identified_attempts,"unidentified_call_attempts":unidentified_attempts,"last_success_at":last_success,"whatsapp_optin_granted_count":counts.get("granted",0),"whatsapp_optin_declined_count":counts.get("declined",0),"whatsapp_optin_no_reply_count":counts.get("no_reply",0),"productive_count":counts.get("success",0),"ring_count":counts.get("ring",0),"busy_count":counts.get("busy",0),"voicemail_count":sum(counts.get(k,0) for k in ["voicemail","voicemail_direct","voicemail_rang"]),"filtered_count":counts.get("filtered",0),"technical_failure_count":counts.get("technical",0)+counts.get("technical_exclusion",0),"unreachable_count":counts.get("unreachable",0),"invalid_count":counts.get("invalid",0),"identified_call_no_answer_count":identified_low,"unidentified_call_no_answer_count":traditional_low,"branded_unconfirmed_count":branded_unconfirmed,"clear_delivery_opportunities":opportunities,"has_proof_of_valid_number":strong,"has_success":success,"has_digital_engagement":digital,"whatsapp_consent_latest":last_consent,"last_attempt_at":str(rows.iloc[-1].get(sort,"")) if len(rows) and sort else ""}
+
+
+def classify_non_contact_numbers(current,all_data=None,end=None):
+    _,_,cohort=outcome_frames(current)
+    source=(all_data if all_data is not None else current).copy()
+    # Nunca utilizar acontecimentos posteriores ao filtro na decisão histórica.
+    if end is not None and "_date" in source:source=source[source["_date"].le(end)]
+    source=source[source["contact_id"].isin(cohort["contact_id"])]
+    records=[]
+    for id,history in source.groupby("contact_id",sort=False):
+        record=classify_number_history(history);record["contact_id"]=id
+        for field in ["phone_number","destination_number","called_number","contact_phone","ddd","destination_carrier","lead_source","segment","strategy_name"]:
+            if field in history:
+                values=history[field].dropna();record[field]=str(values.iloc[-1]) if not values.empty else "Não informado"
+        records.append(record)
+    return pd.DataFrame(records)
+
+
+def contactability_clusters(frame):
+    if frame.empty:return []
+    work=frame.copy();work["_signal"]=work.apply(normalize_attempt_signal,axis=1)
+    work=work[work["_signal"].ne("excluded_success")]
+    work["_technical"]=work["_signal"].isin(["technical","technical_exclusion","unreachable"])
+    baseline=float(work["_technical"].mean()) if len(work) else 0
+    candidates=[]
+    combinations=[["ddd","destination_carrier"],["ddd"],["destination_carrier"],["region"],["hour"],["_date"],["strategy_name"],["campaign"],["outbound_carrier"],["route"],["trunk"]]
+    for columns in combinations:
+        if not all(c in work for c in columns):continue
+        for key,rows in work.groupby(columns,dropna=True):
+            keys=key if isinstance(key,tuple) else (key,)
+            if len(rows)<10 or rows["contact_id"].nunique()<5:continue
+            share=float(rows["_technical"].mean())
+            if share<0.5 or share<baseline+0.2:continue
+            labels={"ddd":"DDD","destination_carrier":"operadora destino","region":"região","hour":"hora","strategy_name":"estratégia","_date":"dia","campaign":"campanha","outbound_carrier":"conectividade","route":"rota","trunk":"conexão"}
+            label=" · ".join(labels[c]+" "+str(v) for c,v in zip(columns,keys))
+            candidates.append({"grupo":label,"numeros":int(rows["contact_id"].nunique()),"registros":len(rows),"indisponibilidade_pct":round(share*100,1),"base_pct":round(baseline*100,1)})
+    return sorted(candidates,key=lambda r:(-r["indisponibilidade_pct"],-r["registros"]))[:3]
+
+
+def next_action_ai_summary(classified):
+    if classified.empty:return {"numeros":0,"acoes":[]}
+    return {"numeros":len(classified),"acoes":[{"acao":ACTION_INFO[key][0],"numeros":int(len(rows)),"exemplo_de_evidencia":rows.iloc[0]["recommendation_reason"],"acao_de_negocio":ACTION_INFO[key][2]} for key,rows in classified.groupby("recommended_action")],"premissas":"Uma classificação por número da coorte sem contato no filtro; histórico disponível até o fim do período, entre estratégias. Evidência de entrega prevalece sobre falhas anteriores. Branded estimado não comprova logo exibido. Não inferir rejeição, não determinar parâmetros de discagem, não sugerir remover automaticamente. Sucesso no histórico prevalece. Limites internos de classificação são critérios de diagnóstico, não régua de insistência."}
+
+
+def render_non_contact_actions(current,selected,classified,clusters):
+    if classified.empty:return
+    counts=classified["recommended_action"].value_counts();total=len(classified)
+    rows=[]
+    for key,n in counts.items():
+        title,diagnosis,action,color=ACTION_INFO[key];pct=n/total*100
+        rows.append(f'<article class="action-row"><div class="action-row-title"><i style="background:{color}"></i><b>{esc(title)}</b><span>{br(n)} números · {br(pct,1)}%</span></div><div class="action-meter"><i style="width:{pct:.2f}%;background:{color}"></i></div><p>{esc(action)}</p></article>')
+    st.markdown("""<style>
+.nba-layout{display:grid;grid-template-columns:1.25fr 1fr;gap:24px;padding:18px;}.action-row{margin-bottom:16px;}.action-row-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;}.action-row-title>i{width:8px;height:8px;border-radius:50%;}.action-row-title span{margin-left:auto;font-size:11px;color:#bfd2ea;}.action-meter{height:7px;border-radius:5px;background:#123454;margin:8px 0;overflow:hidden;}.action-meter>i{display:block;height:100%;border-radius:5px;}.action-row p{font-size:11px;color:#afc8e4;line-height:1.5;}.nba-read h3{font-size:15px;margin:0 0 12px;}.nba-read p,.nba-read li{font-size:12px;line-height:1.55;color:#bfd2ea;}.nba-read ul{padding-left:16px;}.nba-read li{margin-bottom:10px;}.nba-foot{font-size:10px;line-height:1.55;color:#96b3d3;border-top:1px solid #1b4269;margin-top:14px;padding-top:10px;}@media(max-width:850px){.nba-layout{grid-template-columns:1fr;gap:16px;}}
+</style>""",unsafe_allow_html=True)
+    insights=[]
+    strong=int(classified["has_proof_of_valid_number"].sum());unconfirmed=int(classified["branded_unconfirmed_count"].gt(0).sum())
+    insights.append(f'<b>{br(strong)} números têm sinal de validade.</b> Entrega ou interação pode superar várias falhas anteriores; isso não comprova interesse na oferta.')
+    if unconfirmed:insights.append(f'<b>{br(unconfirmed)} números tiveram branded sem confirmação do logo.</b> Não classificar como baixa resposta a uma identificação comprovada usando apenas o percentual estimado de impressões.')
+    prior_success=int(classified["recommended_action"].eq("STOP_AFTER_SUCCESS").sum())
+    if prior_success:insights.append(f'<b>{br(prior_success)} têm sucesso ou encerramento no histórico.</b> Estão sem contato no recorte atual, mas o sucesso anterior prevalece na próxima ação.')
+    for cluster in clusters:insights.append(f'<b>Concentração em {esc(cluster["grupo"])}:</b> {br(cluster["indisponibilidade_pct"],1)}% de {br(cluster["registros"])} registros de {br(cluster["numeros"])} números tiveram indisponibilidade ou condição técnica, versus {br(cluster["base_pct"],1)}% no filtro. Sinal para avaliação Nuveto; não confirma uma falha de infraestrutura.')
+    if not clusters:insights.append("Não foi encontrada concentração de indisponibilidade que atendesse aos critérios mínimos nos campos disponíveis. Isso não comprova ausência de problemas.")
+    body='<div class="nba-layout"><div><div class="nc-intro"><b>'+br(total)+' números · próxima ação</b></div>'+''.join(rows)+'</div><div class="nba-read"><h3>Como interpretar</h3><ul>'+''.join('<li>'+t+'</li>' for t in insights)+'</ul><div class="nba-foot">Cada número recebe uma ação principal. Grupo: números sem contato no período e estratégia filtrados. A decisão usa todo o histórico disponível até a data final, incluindo outras estratégias; não considera eventos futuros. Nenhuma tentativa ou tarifa é alterada. Os critérios de diagnóstico não são limites de retentativas. SIP sem dicionário validado não prova bloqueio ou inexistência.</div></div></div>'
+    st.markdown('<div class="cockpit">'+panel("Não contactados · o que fazer agora",body,'<span class="tag">'+esc(selected)+'</span>',"nc-panel")+'</div>',unsafe_allow_html=True)
+    with st.expander("Conferir a classificação por número"):
+        state_names={"VALID":"Evidência de número válido","PROBABLY_VALID":"Provavelmente válido","INVALID":"Indício forte de número inválido","UNKNOWN":"Não determinado"}
+        view=classified.copy();view["number_state"]=view["number_state"].map(state_names);view["recommended_action"]=view["recommended_action"].map(lambda key:ACTION_INFO[key][0])
+        columns={"contact_id":"Identificador do número","number_state":"Estado do número","recommended_action":"Próxima ação","recommendation_reason":"Por quê","confidence":"Confiança","attempt_records":"Registros no histórico","effective_attempts":"Tentativas realizadas","clear_delivery_opportunities":"Oportunidades claras","identified_call_no_answer_count":"Baixa resposta com identificação confirmada","branded_unconfirmed_count":"Branded sem confirmação do logo","last_attempt_at":"Último registro"}
+        st.dataframe(view[list(columns)].rename(columns=columns),hide_index=True,use_container_width=True)
+        st.caption("Repetição de baixa resposta: 3 registros; invalidez: 2 sem evidência de validade; conectividade: 2 registros sem sinal de entrega. Critérios iniciais do diagnóstico, não parâmetros do discador. Concentrações: mínimo 10 registros e 5 números, pelo menos 50% de indisponibilidade e 20 pontos percentuais acima do filtro. DDD/origem de demonstração não representam achados reais.")
+        st.download_button("Baixar classificação",data=classified.to_csv(index=False).encode("utf-8-sig"),file_name="classificacao_contactabilidade.csv",mime="text/csv",key="export_nba_numbers")
 
 def analytic_attempts(df):
     names = {
@@ -1937,7 +2126,9 @@ if detail_name not in names: detail_name=names[0]
 
 period_df = df_fact if date_start is None else df_fact[df_fact["_date"].between(date_start, date_end)]
 filtered = period_df if selected == "Todas" else period_df[period_df["strategy_name"].eq(selected)]
-render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end,all_data=df_fact,billing=monthly_demo_usage(billing_profile,df_costs,datetime.now(ZoneInfo("America/Sao_Paulo")).day))
+number_actions=classify_non_contact_numbers(filtered,df_fact,date_end)
+connectivity_clusters=contactability_clusters(filtered)
+render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end,all_data=df_fact,billing=monthly_demo_usage(billing_profile,df_costs,datetime.now(ZoneInfo("America/Sao_Paulo")).day),action_summary=next_action_ai_summary(number_actions))
 detail = period_df[period_df["strategy_name"].eq(detail_name)]
 current = funnel_metrics(filtered)
 previous = None
@@ -2098,4 +2289,4 @@ output = '<div class="cockpit"><div class="dashboard strategy-config-wide">'+con
 st.markdown(output, unsafe_allow_html=True)
 
 # Último quadro: resultados por canal dos números ainda não contactados.
-render_non_contact_panel(filtered,selected)
+render_non_contact_actions(filtered,selected,number_actions,connectivity_clusters)
