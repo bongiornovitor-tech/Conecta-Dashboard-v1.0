@@ -83,7 +83,7 @@ CSS = """
 .use-cases{display:flex;gap:22px;}.use-case{display:flex;align-items:center;gap:9px;font-size:11px;}.use-case small{display:block;color:var(--muted);font-size:10px;}
 .icon {width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:10px;background:linear-gradient(145deg,var(--accent),color-mix(in srgb,var(--accent) 45%,#001a44));border:1px solid color-mix(in srgb,var(--accent) 70%,white);box-shadow:0 0 22px color-mix(in srgb,var(--accent) 25%,transparent),inset 0 0 12px #ffffff12;color:white;}
 .icon svg{width:24px;height:24px;}.use-case .icon{width:32px;height:32px;background:#031732;box-shadow:0 0 12px #2650ff22;}.use-case .icon svg{width:19px;height:19px;}
-.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:10px 0;}
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;margin:10px 0;}
 .kpi,.panel{background:linear-gradient(130deg,#031e3c 0%,#00152b 65%,#041a36 100%);border:1px solid var(--line);border-radius:11px;box-shadow:inset 0 0 18px #0867e80a,0 5px 16px #00000016;min-width:0;overflow:hidden;}
 .kpi{padding:12px;position:relative;min-height:122px;}.kpi-head{display:flex;gap:12px;align-items:center;}.kpi-label{font-size:11px;font-weight:600;color:#dce5ff;}.kpi-value{font-size:clamp(20px,1.55vw,28px);font-weight:800;white-space:nowrap;margin-top:4px;letter-spacing:-.5px;}
 .kpi-foot{display:flex;justify-content:space-between;align-items:end;gap:4px;margin-top:13px;}.delta{font-size:12px;font-weight:700;}.sub{font-size:10px;color:var(--muted);margin-top:3px;}.spark{width:46%;height:35px;overflow:visible;}
@@ -690,6 +690,9 @@ def check_groq_budget(payload, key, model):
     except (ValueError,TypeError): configured=8000
     limit=min(max(2000,configured),snapshot.get("limit",max(2000,configured)))
     estimate=estimate_groq_input(payload,budget_id)
+    available=int(limit*0.9)-estimate
+    if available>=1800:
+        payload["max_completion_tokens"]=min(payload["max_completion_tokens"],available)
     required=estimate+payload["max_completion_tokens"]
     if required>int(limit*0.9):
         st.session_state.ai_diagnostics = f"Preparação local: entrada estimada {estimate}, reserva de saída {payload['max_completion_tokens']}, orçamento {int(limit*0.9)}. Nenhuma chamada enviada."
@@ -806,6 +809,13 @@ def compact_ai_context(context, prompt, minimal=False):
     premises.append("Agrupei os motivos das tentativas e priorizei os grupos de maior volume. Detalhes não apresentados não sustentam conclusões; pessoas de grupos diferentes não são somadas.")
     if minimal or omitted:
         premises.append("A análise usa uma síntese dos detalhes, preservando os totais do dashboard e o recorte escolhido.")
+    if minimal:
+        summary = {k:v for k,v in summary.items() if k in ["filtros","kpis_dashboard","comparacao_periodos","conhecimento_do_dashboard"]}
+        knowledge=summary.get("conhecimento_do_dashboard",{})
+        # Preserva assunto e premissas essenciais; no máximo dois turnos resumidos.
+        if "conversa_anterior" in knowledge:
+            knowledge["conversa_anterior"]=[{"pergunta":t["pergunta"][:250],"resposta":t["resposta"][:500]} for t in knowledge["conversa_anterior"][-2:]]
+        premises.append("Para esta resposta, usei os indicadores gerais, a comparação e o conhecimento do assunto. Não inferi detalhes por canal ou horário que ficaram fora da síntese.")
     summary["premissas_da_sintese"] = premises
     return summary,premises
 
@@ -837,6 +847,21 @@ def product_topics(prompt):
     q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
     rules={"conceitos":r"conecta|chamada|produtiv|bilhet|duracao", "franquias":r"franquia|inclu|contempla|canai|canal|pacote", "exclusoes":r"cobert|cobr|meta|hiya|hsm|exclu|fora|nao inclu", "casos":r"caso|exemplo|venda|banco|financ|cobranca|b2b|sdr|uso", "servicos":r"suporte|sla|implant|ativacao|success|servico"}
     return [k for k,v in rules.items() if re.search(v,q)]
+
+def local_product_explanation(prompt):
+    q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    if not re.search(r"o que|que e|significa|defin|explique|explica|diferenca|conceito|quais.*(?:inclu|franquia|cobert)|esta.*(?:inclu|cobert)",q):
+        return None
+    # Perguntas de diagnóstico ou comparação precisam dos dados e da análise.
+    if re.search(r"por que|porque|aument|diminu|melhor|pior|recomen|meus|minha|neste periodo",q): return None
+    if re.search(r"improdutiv|nao produtiv|produtiv",q):
+        answer="**No dashboard**\n- Contato produtivo: número com resultado marcado como produtivo nos dados. Não significa necessariamente venda.\n- Contato improdutivo: número com resultado marcado como improdutivo e sem resultado produtivo no período.\n- Se o mesmo número teve os dois resultados, ele conta apenas como produtivo. Números sem esses resultados ficam em não contactados.\n\n**Na proposta, para bilhetagem**\n- Chamada produtiva: duração igual ou superior a 2 minutos.\n- Chamada improdutiva: duração inferior a 2 minutos.\n- Essa classificação por duração é diferente do resultado do contato. Caixa postal pode gerar cobrança sem conversa humana."
+    else:
+        topics=product_topics(prompt)
+        if not topics: return None
+        answer="\n\n".join("- "+PRODUCT_KNOWLEDGE[t].replace(". ",".\n- ") for t in topics[:2])
+    return {"resumo":answer,"recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
+
 
 def commercial_price_question(prompt):
     q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
@@ -901,6 +926,10 @@ AI_SYSTEM += "\nNunca informe preços comerciais ou tarifas do Conecta+, Meta ou
 def run_ai_analysis(context, prompt):
     if commercial_price_question(prompt):
         return {"resumo":"- Para preços, tarifas e condições comerciais do Conecta+, procure o responsável comercial da Nuveto.\n- Posso explicar as franquias, os itens incluídos e os componentes cobrados separadamente.","recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
+    product_answer=local_product_explanation(prompt)
+    if product_answer is not None:
+        st.session_state.ai_diagnostics="Explicação do conhecimento do dashboard · sem chamada à API"
+        return product_answer
     local=local_dashboard_explanation(context,prompt) if not product_topics(prompt) and not st.session_state.get("ai_history") else None
     if local is not None:
         st.session_state.ai_diagnostics="Explicação calculada pelo dashboard · sem chamada à API"
@@ -910,12 +939,12 @@ def run_ai_analysis(context, prompt):
     context["conhecimento_do_dashboard"]["produto"]= {k:PRODUCT_KNOWLEDGE[k] for k in product_topics(prompt)[:2]}
     history=st.session_state.get("ai_history",[])
     if history:
-        context["conhecimento_do_dashboard"]["conversa_anterior"] = history[-6:]
+        context["conhecimento_do_dashboard"]["conversa_anterior"] = [{"pergunta":t["pergunta"][:300],"resposta":t["resposta"][:700]} for t in history[-3:]]
     config = dict(st.secrets.get("ai", {}))
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"product-conversation-v5"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"product-ux-v6"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -1091,7 +1120,22 @@ def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
 
 
 
-KPI_LABELS = ["Números únicos", "Contatos produtivos", "Contatos improdutivos", "Sem contato", "Custo total", "Custo por contato efetivo"]
+KPI_LABELS = ["Números únicos", "Números não contactados", "Números contactados", "Contatos improdutivos", "Contatos produtivos", "Custo total", "Custo por contato produtivo"]
+
+
+def funnel_metrics(frame):
+    unique,productive,unproductive,none,cost,unit=metrics(frame)
+    return [unique,none,productive+unproductive,unproductive,productive,cost,unit]
+
+
+def select_detail_strategy(name):
+    st.session_state.detail_strategy=name
+
+
+def reset_detail_strategy():
+    selected=st.session_state.get("strategy_filter","Todas")
+    if selected!="Todas": st.session_state.detail_strategy=selected
+
 
 
 def open_indicator(index):
@@ -1116,8 +1160,9 @@ def indicator_series(df, index, granularity, start=None, end=None):
     base = pd.DataFrame(index=periods)
     base.index.name = "Período"
     prod, improd, no_contact = outcome_frames(df)
-    events = [df.drop_duplicates("contact_id"),prod,improd,no_contact]
-    if index <= 3:
+    contacted=pd.concat([prod,improd],ignore_index=True)
+    events = [df.drop_duplicates("contact_id"),no_contact,contacted,improd,prod]
+    if index <= 4:
         if index == 0:
             events[0] = df.sort_values("_date",kind="stable").drop_duplicates("contact_id")
         event = events[index]
@@ -1126,14 +1171,14 @@ def indicator_series(df, index, granularity, start=None, end=None):
         base[KPI_LABELS[index]] = counts.reindex(periods,fill_value=0)
     else:
         costs = dated.groupby(bucket(dated["_date"]))["custo_num"].sum().reindex(periods,fill_value=0)
-        if index == 4:
+        if index == 5:
             base[KPI_LABELS[index]] = costs.cumsum()
         else:
             dated_prod = prod[prod["_date"].notna()]
             counts = dated_prod.groupby(bucket(dated_prod["_date"]))["contact_id"].nunique().reindex(periods,fill_value=0)
             base[KPI_LABELS[index]] = costs.div(counts.where(counts>0))
-    attempts = df[df["contact_id"].isin(events[index]["contact_id"])].copy() if index in [1,2,3] else df.copy()
-    if index in [1,2,3]:
+    attempts = df[df["contact_id"].isin(events[index]["contact_id"])].copy() if index in [1,2,3,4] else df.copy()
+    if index in [1,2,3,4]:
         valid_attempts = attempts[attempts["_date"].notna()]
         for channel, label in VOICE_ACTIONS.items():
             channel_rows = valid_attempts[valid_attempts["channel"].eq(channel)]
@@ -1178,7 +1223,7 @@ def render_indicator_detail(df, selected_strategy, start, end):
         if series.empty:
             st.info("Não há tentativas com data válida neste intervalo.")
             return
-        has_table = index in [1,2,3]
+        has_table = index in [1,2,3,4]
         if has_table:
             chart_col, table_col = st.columns([1.25,1],gap="medium")
         else:
@@ -1187,7 +1232,7 @@ def render_indicator_detail(df, selected_strategy, start, end):
             long = series.melt(id_vars="Período",var_name="Série",value_name="Valor")
             # Mantém lacunas quando não há denominador para custo por contato.
             colors = ["#00dcc0","#168bff","#983bff","#8aa8ff"] if has_table else ["#168bff"]
-            currency = index >= 4
+            currency = index >= 5
             chart = alt.Chart(long).mark_line(point=True,strokeWidth=2.5).encode(
                 x=alt.X("Período:T",title="Período",axis=alt.Axis(format="%d/%m/%Y",labelAngle=-30)),
                 y=alt.Y("Valor:Q",title="Custo (R$)" if currency else "Quantidade",scale=alt.Scale(zero=True)),
@@ -1203,7 +1248,7 @@ def render_indicator_detail(df, selected_strategy, start, end):
             st.caption("O indicador conta cada pessoa uma vez no intervalo, na primeira ocorrência do resultado. As linhas de canal contam todas as tentativas dessas pessoas, incluindo retries. WhatsApp texto aparece na tabela como fluxo associado, sem uma linha de ação de voz.")
         elif index == 0:
             st.caption("Cada número é atribuído à primeira tentativa no período filtrado. A soma dos pontos corresponde ao KPI Números únicos.")
-        elif index == 4:
+        elif index == 5:
             st.caption("Soma acumulada dos custos das tentativas dentro do período filtrado. O último ponto corresponde ao Custo total.")
         else:
             st.caption("Custo das tentativas de cada intervalo dividido pelos contatos que tiveram o primeiro resultado produtivo nesse intervalo. Intervalos sem contatos produtivos ficam sem valor.")
@@ -1588,15 +1633,15 @@ with f1:
             st.stop()
         date_start, date_end = map(pd.Timestamp, selection)
 with f2:
-    selected = st.selectbox("Estratégia", ["Todas"] + names)
-detail_name = selected if selected != "Todas" else st.session_state.get("detail_strategy",names[0])
+    selected = st.selectbox("Estratégia", ["Todas"] + names,key="strategy_filter",on_change=reset_detail_strategy)
+detail_name = st.session_state.get("detail_strategy",selected if selected != "Todas" else names[0])
 if detail_name not in names: detail_name=names[0]
 
 period_df = df_fact if date_start is None else df_fact[df_fact["_date"].between(date_start, date_end)]
 filtered = period_df if selected == "Todas" else period_df[period_df["strategy_name"].eq(selected)]
 render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end,all_data=df_fact)
 detail = period_df[period_df["strategy_name"].eq(detail_name)]
-current = metrics(filtered)
+current = funnel_metrics(filtered)
 previous = None
 if date_start is not None:
     days = (date_end - date_start).days + 1
@@ -1604,31 +1649,31 @@ if date_start is not None:
     if selected != "Todas":
         previous_df = previous_df[previous_df["strategy_name"].eq(selected)]
     if not previous_df.empty:
-        previous = metrics(previous_df)
+        previous = funnel_metrics(previous_df)
 
 # Tendências e variações reais. Não exibimos os deltas fictícios do mockup.
 daily = []
 if not filtered["_date"].dropna().empty:
     for day in pd.date_range(filtered["_date"].min(), filtered["_date"].max()):
-        daily.append(metrics(filtered[filtered["_date"].eq(day)]))
+        daily.append(funnel_metrics(filtered[filtered["_date"].eq(day)]))
 kpi_html = []
 labels = KPI_LABELS
-for i, (label, kind, color) in enumerate(zip(labels, ["users", "phone", "off", "off", "coin", "bars"], ["#168bff", "#00cfb2", "#ee3585", "#6389c5", "#853aff", "#168bff"])):
-    value = money(current[i]) if i >= 4 else br(current[i])
-    desc = f"{br(current[i]/current[0]*100 if current[0] else 0,1)}% da base" if i in [1,2,3] else "no período selecionado"
+for i, (label, kind, color) in enumerate(zip(labels, ["users", "off", "phone", "off", "phone", "coin", "bars"], ["#168bff", "#6389c5", "#00bffc", "#ee3585", "#00cfb2", "#853aff", "#168bff"])):
+    value = money(current[i]) if i >= 5 else br(current[i])
+    desc = f"{br(current[i]/current[0]*100 if current[0] else 0,1)}% da base" if i in [1,2,3,4] else "no período selecionado"
     delta, delta_color = "", "#a5b8df"
     if previous and previous[i] and current[i] is not None:
         change = (current[i] / previous[i]-1)*100
-        good = change >= 0 if i in [0,1] else change <= 0
+        good = change >= 0 if i in [0,2,4] else change <= 0
         delta_color = "#00dcc0" if good else "#f33b91"
         delta = f'{"▲" if change >= 0 else "▼"} {"+" if change >= 0 else ""}{br(change,1)}%'
         desc = "vs. "+(date_start-pd.Timedelta(days=days)).strftime("%d/%m")+" a "+(date_start-pd.Timedelta(days=1)).strftime("%d/%m")
     trend = spark([row[i] for row in daily], color, f"spark-{i}")
-    kpi_html.append(f'<article class="kpi"><div class="kpi-head">{icon(kind,color)}<div><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div></div></div><div class="kpi-foot"><div><div class="delta" style="color:{delta_color}">{delta or "&nbsp;"}</div><div class="sub">{desc}</div></div>{trend}</div></article>')
+    kpi_html.append(f'<article class="kpi"><div class="kpi-head">{icon(kind,color)}<div><div class="kpi-label">{label}</div><div class="kpi-value" style="--kpi-size:{100/(max(1,len(value))*0.65):.2f}cqw">{value}</div></div></div><div class="kpi-foot"><div><div class="delta" style="color:{delta_color}">{delta or "&nbsp;"}</div><div class="sub">{desc}</div></div>{trend}</div></article>')
 
 # O botão transparente cobre o card inteiro e preserva acesso por teclado.
 st.markdown("""<style>
-.st-key-kpi_grid [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;}
+.st-key-kpi_grid [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;}
 .st-key-kpi_grid [data-testid="stColumn"] {width:100%!important;min-width:0!important;}
 .st-key-kpi_grid [class*="st-key-kpi_click_"] {position:relative!important;isolation:isolate;}
 .st-key-kpi_grid [class*="st-key-kpi_click_"] [data-testid="stVerticalBlock"] {gap:0;}
@@ -1645,11 +1690,21 @@ st.markdown("""<style>
 .st-key-kpi_grid [class*="st-key-kpi_click_"]:hover .kpi {border-color:#268eff;box-shadow:0 0 14px #168bff25;}
 .st-key-kpi_grid [class*="st-key-kpi_click_"]:has(button:focus-visible) .kpi {outline:2px solid #00dcc0;outline-offset:2px;}
 .st-key-indicator_detail_panel {background:#03182f;border-color:#164579!important;}
-@media(max-width:1250px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(3,minmax(0,1fr));}}
+.strategy-config-wide {grid-template-columns:1fr!important;}
+.st-key-kpi_grid .kpi {height:100%;min-height:140px;}
+.st-key-kpi_grid .kpi-label {min-height:34px;line-height:1.35;display:flex;align-items:flex-start;}
+.st-key-kpi_grid .kpi-head {align-items:flex-start;gap:8px;}
+.st-key-kpi_grid .kpi-head>div {min-width:0;flex:1;container-type:inline-size;}
+.st-key-kpi_grid .kpi-value {white-space:nowrap!important;overflow-wrap:normal!important;font-size:min(29px,var(--kpi-size,22cqw));}
+.st-key-kpi_grid .icon {width:34px;height:34px;}
+@media(max-width:1400px) and (min-width:561px){.st-key-kpi_grid [class*="st-key-kpi_click_4"]{grid-column:auto;}.st-key-kpi_grid .kpi-value{font-size:min(29px,var(--kpi-size,22cqw));}}
+@media(max-width:560px){.st-key-kpi_grid .kpi-value{font-size:min(25px,var(--kpi-size,22cqw));}.st-key-kpi_grid [data-testid="stColumn"]:last-child{grid-column:1/-1;}}
+
+@media(max-width:1400px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(4,minmax(0,1fr));}}
 @media(max-width:560px){.st-key-kpi_grid [data-testid="stHorizontalBlock"]{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}}
 </style>""",unsafe_allow_html=True)
 with st.container(key="kpi_grid"):
-    card_columns = st.columns(6)
+    card_columns = st.columns(7)
     for index,column in enumerate(card_columns):
         with column:
             with st.container(key=f"kpi_click_{index}"):
@@ -1658,15 +1713,6 @@ with st.container(key="kpi_grid"):
 render_indicator_detail(filtered,selected,date_start,date_end)
 
 summary = [(name, metrics(period_df[period_df["strategy_name"].eq(name)])) for name in names]
-st.markdown("### Visão por Estratégia")
-st.caption("Selecione uma linha para visualizar os detalhes da estratégia abaixo.")
-strategy_view=pd.DataFrame([{"Estratégia":name,"Números únicos":m[0],"% contato produtivo":round(m[1]/m[0]*100,1) if m[0] else 0,"Custo total":m[4],"Custo por contato efetivo":m[5]} for name,m in summary])
-event=st.dataframe(strategy_view,hide_index=True,use_container_width=True,on_select="rerun",selection_mode="single-row",key="strategy_table_selection",column_config={"% contato produtivo":st.column_config.NumberColumn(format="%.1f%%"),"Custo total":st.column_config.NumberColumn(format="R$ %.2f"),"Custo por contato efetivo":st.column_config.NumberColumn(format="R$ %.2f")})
-if event.selection.rows:
-    detail_name=strategy_view.iloc[event.selection.rows[0]]["Estratégia"]
-    st.session_state.detail_strategy=detail_name
-# A escolha da tabela controla apenas os painéis inferiores.
-detail=period_df[period_df["strategy_name"].eq(detail_name)]
 max_unique = max([m[0] for _, m in summary] + [1])
 max_cost = max([m[4] for _, m in summary] + [1])
 max_unit = max([m[5] or 0 for _, m in summary] + [1])
@@ -1677,7 +1723,30 @@ for name, m in summary:
     vals = [(br(m[0]),m[0]/max_unique*100,"#00acff"),(br(m[1]/m[0]*100 if m[0] else 0,1)+"%",m[1]/m[0]*100 if m[0] else 0,"#00d6b4"),(money(m[4]),m[4]/max_cost*100,"#477dff"),(money(m[5]),(m[5] or 0)/max_unit*100,"#b659ff")]
     cells = "".join(f'<td>{value}<div class="bar" style="--accent:{color}"><i style="width:{pct:.2f}%"></i></div></td>' for value,pct,color in vals)
     rows.append(f'<tr class="{"active" if name==detail_name else ""}"><td><div class="strategy-name">{esc(name)}</div><div class="strategy-desc">{esc(objective)}</div></td>{cells}</tr>')
-strategy_panel = panel("Visão por Estratégia", '<div class="panel-body" style="padding:0 6px 6px"><table class="strategy-table"><thead><tr><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por contato efetivo</th></tr></thead><tbody>'+"".join(rows)+'</tbody></table></div>')
+# Mantém o desenho original; botão transparente cobre toda a linha.
+st.markdown("""<style>
+.st-key-strategy_interactive {border:1px solid #164579;border-radius:11px;overflow:hidden;background:#02192f;}
+.st-key-strategy_interactive [data-testid="stVerticalBlock"]{gap:0!important;}
+.st-key-strategy_interactive [class*="st-key-strategy_row_"]{position:relative!important;isolation:isolate;}
+.st-key-strategy_interactive [class*="st-key-strategy_row_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]),
+.st-key-strategy_interactive [class*="st-key-strategy_row_"] .element-container:has([data-testid="stButton"]){position:absolute!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;z-index:3;}
+.st-key-strategy_interactive [data-testid="stButton"]{height:100%!important;width:100%!important;}
+.st-key-strategy_interactive [data-testid="stButton"] button{height:100%!important;width:100%!important;background:transparent!important;color:transparent!important;border:0!important;box-shadow:none!important;border-radius:0!important;}
+.st-key-strategy_interactive [data-testid="stButton"] button *{color:transparent!important;}
+.st-key-strategy_interactive [class*="st-key-strategy_row_"]:hover{background:#0b2b55;}
+.st-key-strategy_interactive [class*="st-key-strategy_row_"]:has(button:focus-visible){outline:2px solid #00dcc0;outline-offset:-2px;}
+.st-key-strategy_interactive .strategy-table th:first-child,.st-key-strategy_interactive .strategy-table td:first-child{width:34%;}
+.st-key-strategy_interactive .strategy-table th:not(:first-child),.st-key-strategy_interactive .strategy-table td:not(:first-child){width:16.5%;border-left:1px solid #16314e;}
+.st-key-strategy_interactive .panel-title{border-bottom:1px solid #164579;}
+</style>""",unsafe_allow_html=True)
+with st.container(key="strategy_interactive"):
+    st.markdown('<div class="cockpit"><div class="panel-title">Visão por Estratégia</div><table class="strategy-table"><thead><tr><th>Estratégia</th><th>Números únicos</th><th>% contato produtivo</th><th>Custo total</th><th>Custo por contato produtivo</th></tr></thead></table></div>',unsafe_allow_html=True)
+    for row_index,((name,_),row_html) in enumerate(zip(summary,rows)):
+        with st.container(key=f"strategy_row_{row_index}"):
+            st.markdown('<div class="cockpit"><table class="strategy-table"><tbody>'+row_html+'</tbody></table></div>',unsafe_allow_html=True)
+            st.button("Detalhar "+name,key=f"select_strategy_{row_index}",on_click=select_detail_strategy,args=(name,),use_container_width=True,help="Selecionar "+name)
+st.caption("Clique em uma linha para detalhar a estratégia. O filtro superior controla os indicadores gerais e a IA.")
+
 meta = df_strat[df_strat["strategy_name"].eq(detail_name)]
 record = meta.iloc[0] if not meta.empty else pd.Series(dtype=object)
 steps = df_steps[df_steps["strategy_id"].eq(record.get("strategy_id"))].sort_values("step_order") if "strategy_id" in df_steps and "step_order" in df_steps else pd.DataFrame()
@@ -1723,9 +1792,9 @@ for i,(channel,value) in enumerate(cost_series.items()):
     color = COLORS[i % len(COLORS)]
     segments.append(f'<span title="{esc(channel_name(channel))}: {money(value)}" style="width:{pct:.3f}%;background:{color}">{br(pct,1)+"%" if pct>=10 else ""}</span>')
     cost_legend.append(f'<div class="legend-row"><i class="dot" style="background:{color}"></i><span class="legend-name">{esc(channel_name(channel))}<br><b>{money(value)}</b></span></div>')
-mini_cards = "".join(f'<div class="mini-kpi"><small>{label}</small><b style="--value-size:{100/(max(1,len(money(value)))*0.65):.2f}cqw">{money(value)}</b></div>' for label,value in [("Custo por contato efetivo",m[5]),("Custo por contato improdutivo",m[4]/m[2] if m[2] else None),("Custo total da estratégia",m[4])])
+mini_cards = "".join(f'<div class="mini-kpi"><small>{label}</small><b style="--value-size:{100/(max(1,len(money(value)))*0.65):.2f}cqw">{money(value)}</b></div>' for label,value in [("Custo por contato produtivo",m[5]),("Custo por contato improdutivo",m[4]/m[2] if m[2] else None),("Custo total da estratégia",m[4])])
 cost_body = '<div class="cost-body"><div class="cost-cards">'+mini_cards+'</div><div><div class="mini-title">Composição do custo por canal</div><div class="stacked">'+"".join(segments)+'</div><div class="cost-legend">'+"".join(cost_legend)+'</div></div></div>'
 cost_panel = panel("Custos da Estratégia no Período",cost_body,f'<span class="tag">{esc(detail_name)}</span>',"cost-panel")
-output = '<div class="cockpit"><div class="dashboard">'+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
+output = '<div class="cockpit"><div class="dashboard strategy-config-wide">'+config_panel+'</div><div class="bottom">'+funnel_panel+prod_panel+improd_panel+cost_panel+'</div><div class="caption">Fonte: dashboard_fact · Custos incluem todas as tentativas do período. Distribuições por contato único. Variações exibidas somente com histórico comparável. Tarifas ausentes aparecem como —.</div></div>'
 # Uma única árvore HTML mantém o grid coeso e evita tags abertas entre blocos Streamlit.
 st.markdown(output, unsafe_allow_html=True)
