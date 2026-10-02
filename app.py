@@ -770,7 +770,7 @@ def groq_request(messages, structured=True, output_limit=3000):
 
 def compact_ai_context(context, prompt, minimal=False):
     """Preserva KPIs e filtros; seleciona detalhes por volume, sem somar pessoas entre grupos."""
-    core = ["filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin"]
+    core = ["filtros","kpis_dashboard","kpis_registros_executaveis","registros","tentativas_executaveis","registros_excluidos","regras","campos_ausentes","optin","comparacao_periodos","conhecimento_do_dashboard"]
     summary = {k:context[k] for k in core if k in context}
     premises = ["Mantive o período e a estratégia selecionados, com os indicadores completos. Comparações indicam padrões, sem comprovar causa ou ganho futuro."]
     summary["estrategias"] = [{k:row[k] for k in ["nome","objetivo","acoes"] if k in row} for row in context.get("estrategias",[])][:8]
@@ -810,12 +810,80 @@ def compact_ai_context(context, prompt, minimal=False):
     return summary,premises
 
 
+DASHBOARD_KNOWLEDGE = {
+    "indicadores": "Números únicos contam pessoas distintas no recorte. Cada pessoa pertence a um único grupo: se houve qualquer resultado produtivo, fica em produtivos; senão, se houve improdutivo, fica em improdutivos; senão, sem contato. Contactados = produtivos + improdutivos. Percentuais usam os números únicos como denominador. Classificação vem dos indicadores registrados, não é inferida da duração. Produtivo não significa venda ou pagamento.",
+    "custos": "Custo total soma os custos de todas as tentativas no recorte, inclusive repetições; custo por contato efetivo = custo total dividido pelos números únicos produtivos. Sem produtivos, esse custo não é calculável. Valores são históricos registrados por tentativa. Editar tarifas na configuração não recalcula o histórico. Cinco parâmetros: chamada identificada, template WhatsApp e minutos Meta, produtivos e improdutivos. Alterar preços só altera parâmetros na planilha.",
+    "comparacao": "Período anterior é o intervalo imediatamente precedente de igual duração, com ambas as datas incluídas e a mesma estratégia. Variação = (atual/anterior - 1) × 100. Sem registros anteriores ou denominador zero, não há variação percentual exibida. Base incompleta não permite concluir crescimento operacional real.",
+    "filtros": "Período inicial: 01–30/08/2026, editável. Estratégia controla KPIs, detalhes dos KPIs e IA; Todas consolida estratégias. Detalhar estratégia controla somente os painéis inferiores. Ao selecionar uma estratégia no filtro principal, o detalhamento acompanha. IA recebe dados do filtro principal, não do detalhamento.",
+    "graficos": "Gráficos de resultados atribuem cada pessoa à primeira ocorrência do seu resultado final dentro do período selecionado. Pontos somam o KPI. Linhas de canais contam tentativas das pessoas daquele resultado, não pessoas distintas; texto só aparece como fluxo associado. Custo total temporal é acumulado; custo por contato efetivo temporal divide custos do intervalo pelos primeiros resultados produtivos daquele intervalo. Semanas começam segunda-feira; meses e semanas extremos podem ser parciais.",
+    "whatsapp": "Ações configuráveis: Telefonia Tradicional, Branded Call e WhatsApp Call. WhatsApp texto nunca é primeira ação ou etapa independente: só ocorre quando a pessoa responde por texto ao pedido de autorização para WhatsApp Call. O bot esclarece a intenção e busca agendar no canal preferido. Envio de autorização não é contato produtivo nem consentimento; chamar pelo WhatsApp exige autorização.",
+    "dados": "Fonte do dashboard: dashboard_fact, uma linha por tentativa. interaction_attempt guarda tentativas de origem; strategy e strategy_steps definem estratégias; cost_parameters guarda tarifas. Atualizar uma aba não sincroniza automaticamente as outras. Dados são fictícios; agosto foi gerado com 500 pessoas, 2.500 tentativas, 200 contactados (150 improdutivos e 50 produtivos) e 300 sem contato no mês completo 01–30/08/2026. Grupos contactados são divisões, não etapas sequenciais. Recortes menores e estratégias variam. Custos de agosto usam parâmetros atuais e cobrança simulada 30/6 em chamadas atendidas; não comprovam tarifas reais de agosto. DDD/origem/segmento fictícios não provam correlações comerciais.",
+    "campos": "Identificadores ligam pessoa, tentativa, chamada e estratégia; não são métricas. Canal realizado pode ser texto em fluxo de chamada planejada. Data/hora indica quando a tentativa ocorreu; contador de repetições começa em zero. Duração está em segundos. Indicadores de atendimento, produtivo, improdutivo e filtragem descrevem cada tentativa. Resultado do contato resume o desfecho; retorno SIP/Khomp descreve sinalização e exige dicionário validado, não prova recusa nem número inválido sozinho. Consentimento antes/depois e indicadores de template enviado, respondido e autorização gerada descrevem a jornada WhatsApp. ANI é identificação de origem. Ação do analisador é interpretação registrada, não recomendação de negócio.",
+    "premissas": "IA usa resumos agregados, sem telefone ou ID individual. Registros excluídos após sucesso ou por exclusão técnica ficam fora da comparação de tentativas executáveis; KPI considera o recorte completo. Não somar pessoas de grupos sobrepostos. Evidência observacional não prova causalidade. Não inventar recusa, validade, conversão ou ganho futuro. Recomendações só de negócio; ajustes técnicos ficam com Nuveto. Linha do tempo é teste em 7, 14 e 30 dias, sem previsão numérica. Cache dura uma hora na mesma sessão e só reutiliza mesma pergunta e dados.",
+}
+
+
+def knowledge_topics(prompt):
+    q = unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    matches = {"indicadores":r"calcul|indicador|numero|produtiv|contactad|funil", "custos":r"custo|tarifa|preco|efetivo", "comparacao":r"anterior|compar|variacao|cresci|aumento|percent", "filtros":r"filtro|detalhar|periodo|estrategia", "graficos":r"grafico|evolucao|diario|seman|mensal", "whatsapp":r"whatsapp|consent|autoriz|texto|opt.in", "dados":r"fictici|agosto|gerad|base|planilha|tabela", "campos":r"campo|significa|hang|sip|khomp|flag|attempt|retry|ani", "premissas":r"premissa|hipotese|metodo|sintese|token"}
+    return [topic for topic,pattern in matches.items() if re.search(pattern,q)] or ["premissas"]
+
+
+def knowledge_for_question(prompt):
+    # Recuperação por assunto: evita enviar toda a documentação em cada chamada.
+    selected=knowledge_topics(prompt)
+    return {topic:DASHBOARD_KNOWLEDGE[topic] for topic in selected[:2]}
+
+
+def previous_period_context(frame, selected, start, end):
+    if start is None or end is None: return {"disponivel":False,"motivo":"Período sem datas válidas."}
+    days=(end-start).days+1
+    begin=start-pd.Timedelta(days=days); finish=start-pd.Timedelta(days=1)
+    scope=frame if selected=="Todas" else frame[frame["strategy_name"].eq(selected)]
+    before=scope[scope["_date"].between(begin,finish)]
+    now=scope[scope["_date"].between(start,end)]
+    names=["numeros_unicos","produtivos_unicos","improdutivos_unicos","sem_contato_unicos","custo_total","custo_por_contato_efetivo"]
+    native=lambda values:{k:(v.item() if hasattr(v,"item") else v) for k,v in zip(names,values)}
+    current=native(metrics(now));previous=native(metrics(before)) if not before.empty else None
+    changes={k:(round((current[k]/previous[k]-1)*100,2) if previous and previous[k] and current[k] is not None else None) for k in names}
+    return {"disponivel":not before.empty,"inicio":str(begin.date()),"fim":str(finish.date()),"dias":days,"estrategia":selected,"indicadores_atuais":current,"indicadores_anteriores":previous,"variacoes_percentuais":changes,"premissa":"Igual duração; dados ausentes não significam desempenho zero. Cobertura integral do período anterior não foi comprovada."}
+
+
+def local_dashboard_explanation(context, prompt):
+    q=unicodedata.normalize("NFKD",prompt.lower()).encode("ascii","ignore").decode()
+    clarification=bool(re.search(r"qual periodo|que periodo|como.*calcul|como.*conta|o que significa|o que e |qual.*diferenca|quais.*premiss|quais.*campos|como.*gerad|de onde",q))
+    if not clarification: return None
+    if re.search(r"anterior|comparacao",q):
+        comparison=context.get("comparacao_periodos",{})
+        if not comparison.get("inicio"): answer="Não há datas válidas para definir o período anterior neste recorte."
+        else:
+            fmt=lambda x:pd.Timestamp(x).strftime("%d/%m/%Y")
+            answer="O período anterior é de "+fmt(comparison["inicio"])+" a "+fmt(comparison["fim"])+", com "+str(comparison["dias"])+" dias e a mesma estratégia: "+comparison["estrategia"]+". "
+            if comparison.get("disponivel"):
+                old=comparison["indicadores_anteriores"]["produtivos_unicos"];now=comparison["indicadores_atuais"]["produtivos_unicos"]
+                answer+="Contatos produtivos: "+str(old)+" no anterior e "+str(now)+" no atual. "
+                delta=comparison["variacoes_percentuais"]["produtivos_unicos"]
+                if delta is not None: answer+="Variação: "+str(delta).replace(".",",")+"%. "
+                else: answer+="Com base anterior zero, não há variação percentual calculável. "
+                answer+="Isso compara os registros disponíveis; não comprova cobertura completa do período anterior."
+            else: answer+="Não há registros nesse intervalo; por isso, a comparação percentual não está disponível."
+    else:
+        answer="\n\n".join(DASHBOARD_KNOWLEDGE[t] for t in knowledge_topics(prompt)[:3])
+    return {"resumo":answer,"recomendacoes":[],"linha_do_tempo":[],"limitacoes":[],"explicacao_local":True}
+
+
 def run_ai_analysis(context, prompt):
+    local=local_dashboard_explanation(context,prompt)
+    if local is not None:
+        st.session_state.ai_diagnostics="Explicação calculada pelo dashboard · sem chamada à API"
+        return local
+    context=dict(context)
+    context["conhecimento_do_dashboard"]=knowledge_for_question(prompt)
     config = dict(st.secrets.get("ai", {}))
     provider = str(config.get("provider", "gemini")).lower()
     if provider not in ["groq", "gemini"]:
         raise AIAnalysisError('Use provider = "groq" ou "gemini" na seção [ai].')
-    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"groq-budget-v3"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps({"context":context,"prompt":prompt,"provider":provider,"model":config.get("model"),"instructions":AI_SYSTEM,"version":"dashboard-knowledge-v4"}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache = st.session_state.setdefault("ai_analysis_cache", {})
     saved = cache.get(cache_key)
     if saved and time.time() - saved["time"] < 3600:
@@ -858,10 +926,12 @@ def set_ai_prompt(value):
     st.session_state.ai_prompt=value
 
 
-def render_ai_panel(df,strategies,steps,selected,start,end):
+def render_ai_panel(df,strategies,steps,selected,start,end,all_data=None):
     if not st.session_state.get("ai_open"):
         return
     context=build_ai_context(df,strategies,steps,selected,start,end)
+    if all_data is not None:
+        context["comparacao_periodos"]=previous_period_context(all_data,selected,start,end)
     fingerprint=hashlib.sha256(json.dumps(context,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     with st.sidebar:
         if st.button("Fechar IA ×",key="close_ai",use_container_width=True):
@@ -869,6 +939,10 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
             st.rerun()
         st.subheader("IA · Análise de negócio")
         st.caption("Estratégia: "+selected+" · "+context["filtros"]["inicio"]+" a "+context["filtros"]["fim"])
+        with st.expander("Como o dashboard calcula os resultados"):
+            for topic,label in [("indicadores","Indicadores e funil"),("custos","Custos"),("comparacao","Comparação de períodos"),("filtros","Filtros"),("graficos","Gráficos"),("whatsapp","Jornada WhatsApp"),("dados","Dados demonstrativos"),("campos","Significado dos campos"),("premissas","Premissas")]:
+                st.markdown("**"+label+"**")
+                st.write(DASHBOARD_KNOWLEDGE[topic])
         if "ai_prompt" not in st.session_state:
             st.session_state.ai_prompt = ""
         st.text_area("O que você quer entender?",key="ai_prompt",height=140,max_chars=2000,placeholder="Ex.: O que devo mudar no público ou na abordagem para aumentar contatos produtivos?")
@@ -936,7 +1010,7 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
         with st.container(border=True):
             st.markdown("### Leitura executiva")
             st.write(data["resumo"][:2000])
-        if not data["recomendacoes"]:
+        if not data["recomendacoes"] and not data.get("explicacao_local"):
             st.info("Não houve recomendação de negócio válida nesta resposta. Tente uma pergunta sobre público, oferta, abordagem ou qualidade dos leads.")
         for position,row in enumerate(data["recomendacoes"],start=1):
             with st.container(border=True):
@@ -945,7 +1019,8 @@ def render_ai_panel(df,strategies,steps,selected,start,end):
                 for label,field in [("Objetivo","objetivo"),("Evidência","evidencia"),("Hipótese","hipotese"),("Ação sugerida","acao"),("Como validar","validacao")]:
                     st.markdown("**"+label+"**")
                     st.write(row[field][:2000])
-        st.markdown("### Linha do tempo · teste e validação")
+        if data["linha_do_tempo"]:
+            st.markdown("### Linha do tempo · teste e validação")
         for row in data["linha_do_tempo"]:
             with st.container(border=True):
                 st.markdown("**"+row["prazo"][:100]+"**")
@@ -1447,7 +1522,7 @@ with f1:
         st.selectbox("Período", ["Todo o período disponível"], disabled=True)
         date_start = date_end = None
     else:
-        selection = st.date_input("Período", value=(valid_dates.min().date(), valid_dates.max().date()), min_value=valid_dates.min().date(), max_value=valid_dates.max().date(), format="DD/MM/YYYY")
+        selection = st.date_input("Período", value=(pd.Timestamp("2026-08-01").date(), pd.Timestamp("2026-08-30").date()), min_value=min(valid_dates.min().date(),pd.Timestamp("2026-08-01").date()), max_value=max(valid_dates.max().date(),pd.Timestamp("2026-08-30").date()), format="DD/MM/YYYY", key="dashboard_period_august")
         if len(selection) != 2:
             st.info("Escolha a data final do período.")
             st.stop()
@@ -1462,7 +1537,7 @@ with f3:
 
 period_df = df_fact if date_start is None else df_fact[df_fact["_date"].between(date_start, date_end)]
 filtered = period_df if selected == "Todas" else period_df[period_df["strategy_name"].eq(selected)]
-render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end)
+render_ai_panel(filtered,df_strat,df_steps,selected,date_start,date_end,all_data=df_fact)
 detail = period_df[period_df["strategy_name"].eq(detail_name)]
 current = metrics(filtered)
 previous = None
@@ -1490,7 +1565,7 @@ for i, (label, kind, color) in enumerate(zip(labels, ["users", "phone", "off", "
         good = change >= 0 if i in [0,1] else change <= 0
         delta_color = "#00dcc0" if good else "#f33b91"
         delta = f'{"▲" if change >= 0 else "▼"} {"+" if change >= 0 else ""}{br(change,1)}%'
-        desc = "vs. período anterior"
+        desc = "vs. "+(date_start-pd.Timedelta(days=days)).strftime("%d/%m")+" a "+(date_start-pd.Timedelta(days=1)).strftime("%d/%m")
     trend = spark([row[i] for row in daily], color, f"spark-{i}")
     kpi_html.append(f'<article class="kpi"><div class="kpi-head">{icon(kind,color)}<div><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div></div></div><div class="kpi-foot"><div><div class="delta" style="color:{delta_color}">{delta or "&nbsp;"}</div><div class="sub">{desc}</div></div>{trend}</div></article>')
 
